@@ -131,11 +131,22 @@ export async function startBot() {
     // --- WEBHOOK MODE (production on Railway) ---
     console.log("🔗 Starting in webhook mode:", RAILWAY_URL);
 
-    bot = new TelegramBot(TOKEN, { webHook: { port: 3000 } });
+    const app = express();
+    app.use(express.json());
 
-    const webhookUrl = `${RAILWAY_URL}/bot${TOKEN}`;
-    await bot.setWebHook(webhookUrl);
-    console.log("✅ Webhook set:", webhookUrl);
+    bot = new TelegramBot(TOKEN, { webHook: false });
+
+    app.post(`/bot${TOKEN}`, (req, res) => {
+      bot.processUpdate(req.body);
+      res.sendStatus(200);
+    });
+
+    app.listen(3000, () => {
+      console.log("🌐 Express server listening on port 3000");
+    });
+
+    await bot.setWebHook(`${RAILWAY_URL}/bot${TOKEN}`);
+    console.log("✅ Webhook set:", `${RAILWAY_URL}/bot${TOKEN}`);
 
   } else {
     // --- POLLING MODE (local development) ---
