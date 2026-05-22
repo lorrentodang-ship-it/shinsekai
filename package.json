@@ -1,0 +1,16 @@
+{
+  "name": "japanese-tutor-bot",
+  "version": "1.0.0",
+  "description": "Personal Japanese tutor bot on Telegram powered by Claude",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "better-sqlite3": "^9.4.3",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
