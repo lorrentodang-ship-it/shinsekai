@@ -131,7 +131,7 @@ export async function startBot() {
     // --- WEBHOOK MODE (production on Railway) ---
     console.log("🔗 Starting in webhook mode:", RAILWAY_URL);
 
-    bot = new TelegramBot(TOKEN, { webHook: { port: process.env.PORT || 3000 } });
+    bot = new TelegramBot(TOKEN, { webHook: { port: 3000 } });
 
     const webhookUrl = `${RAILWAY_URL}/bot${TOKEN}`;
     await bot.setWebHook(webhookUrl);
