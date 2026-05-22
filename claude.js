@@ -76,7 +76,7 @@ export async function generateScheduledMessage(chatId, prompt) {
   const user = getUser(chatId);
 
   const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-5",
     max_tokens: 1000,
     system: buildSystemPrompt(user),
     messages: [{ role: "user", content: prompt }],
