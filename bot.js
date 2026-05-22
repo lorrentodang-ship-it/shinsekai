@@ -1,11 +1,15 @@
 import TelegramBot from "node-telegram-bot-api";
+import express from "express";
 import { askClaude, generateScheduledMessage } from "./claude.js";
 import { getUser, upsertUser, clearHistory, getVocabLog } from "./db.js";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+  : null;
+
 export let bot;
 
-// Commands and their descriptions
 const COMMANDS = [
   { command: "start", description: "Meet your Japanese tutor Hana" },
   { command: "level", description: "Set your Japanese level (e.g. /level N4)" },
@@ -15,17 +19,11 @@ const COMMANDS = [
   { command: "help", description: "Show all commands" },
 ];
 
-export async function startBot() {
-  bot = new TelegramBot(TOKEN, { polling: true });
-
-  // Set bot commands in Telegram menu
-  await bot.setMyCommands(COMMANDS);
-
+function registerHandlers() {
   // /start
   bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id.toString();
     const firstName = msg.from.first_name || "friend";
-
     upsertUser(chatId, { name: firstName });
 
     const greeting = await generateScheduledMessage(
@@ -35,7 +33,6 @@ export async function startBot() {
       Ask them about their Japanese level (complete beginner, or JLPT level N5-N1). 
       Keep it short and friendly — this is a chat app.`
     );
-
     await bot.sendMessage(chatId, greeting, { parse_mode: "Markdown" });
   });
 
@@ -53,14 +50,12 @@ export async function startBot() {
     }
 
     upsertUser(chatId, { japanese_level: level });
-
     const reply = await generateScheduledMessage(
       chatId,
       `The student just set their Japanese level to ${level}. 
       Acknowledge this enthusiastically, confirm you'll adjust your teaching, 
       and give them a quick taste of what practice at ${level} level will look like. Keep it brief.`
     );
-
     await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
   });
 
@@ -76,7 +71,6 @@ export async function startBot() {
       );
       return;
     }
-
     upsertUser(chatId, { tutor_style: style });
     await bot.sendMessage(chatId, `✅ Tutor style set to *${style}*!`, { parse_mode: "Markdown" });
   });
@@ -90,11 +84,9 @@ export async function startBot() {
       await bot.sendMessage(chatId, "No vocabulary logged yet! Start chatting and I'll track new words for you 📚");
       return;
     }
-
     const list = vocab.map(v =>
       `• ${v.word} (${v.reading}) = ${v.meaning} — seen ${v.times_seen}x`
     ).join("\n");
-
     await bot.sendMessage(chatId, `📚 *Your recent vocabulary:*\n\n${list}`, { parse_mode: "Markdown" });
   });
 
@@ -114,20 +106,14 @@ export async function startBot() {
 
   // All regular messages → Claude
   bot.on("message", async (msg) => {
-    // Skip commands
     if (msg.text?.startsWith("/")) return;
-    // Skip non-text for now
     if (!msg.text) {
       await bot.sendMessage(msg.chat.id, "I can only read text messages for now! 😊");
       return;
     }
 
     const chatId = msg.chat.id.toString();
-
-    // Make sure user exists
     upsertUser(chatId, { name: msg.from.first_name || "friend" });
-
-    // Show typing indicator
     await bot.sendChatAction(chatId, "typing");
 
     try {
@@ -138,11 +124,30 @@ export async function startBot() {
       await bot.sendMessage(chatId, "Hmm, something went wrong on my end. Try again in a moment! 🙏");
     }
   });
+}
 
+export async function startBot() {
+  if (RAILWAY_URL) {
+    // --- WEBHOOK MODE (production on Railway) ---
+    console.log("🔗 Starting in webhook mode:", RAILWAY_URL);
+
+    bot = new TelegramBot(TOKEN, { webHook: { port: process.env.PORT || 3000 } });
+
+    const webhookUrl = `${RAILWAY_URL}/bot${TOKEN}`;
+    await bot.setWebHook(webhookUrl);
+    console.log("✅ Webhook set:", webhookUrl);
+
+  } else {
+    // --- POLLING MODE (local development) ---
+    console.log("🔄 Starting in polling mode (local)");
+    bot = new TelegramBot(TOKEN, { polling: true });
+  }
+
+  await bot.setMyCommands(COMMANDS);
+  registerHandlers();
   console.log("✅ Telegram bot listening for messages...");
 }
 
-// Send a message to a specific chat (used by scheduler)
 export async function sendToChat(chatId, message) {
   return bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
 }
