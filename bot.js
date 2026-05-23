@@ -2,6 +2,7 @@ import TelegramBot from "node-telegram-bot-api";
 import express from "express";
 import { askClaude, generateScheduledMessage } from "./claude.js";
 import { getUser, upsertUser, clearHistory, getVocabLog } from "./db.js";
+import { generateNewsDigest } from "./scheduler.js";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
@@ -17,6 +18,7 @@ const COMMANDS = [
   { command: "vocab", description: "Review your recent vocabulary" },
   { command: "reset", description: "Clear conversation history and start fresh" },
   { command: "help", description: "Show all commands" },
+  { command: "news", description: "Get today's news digest right now" },
 ];
 
 function registerHandlers() {
@@ -36,6 +38,13 @@ function registerHandlers() {
     await bot.sendMessage(chatId, greeting, { parse_mode: "Markdown" });
   });
 
+ // /news - manual trigger
+  bot.onText(/\/news/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    await bot.sendMessage(chatId, "📰 Fetching your news digest... give me a moment!");
+    await generateNewsDigest();
+  });
+  
   // /level N3
   bot.onText(/\/level (.+)/, async (msg, match) => {
     const chatId = msg.chat.id.toString();
