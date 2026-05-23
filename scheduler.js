@@ -36,15 +36,16 @@ ${headlinesText}
 
 Create a morning news digest message that:
 1. Starts with a warm おはようございます greeting with today's energy
-2. Covers 4-5 of the most interesting/important stories across Vietnam, SE Asia, and global news
+2. Covers ONE interesting story from last 24 hours for each of the following themes: Vietnam, Asian international affairs, global international affairs (exclude Asia), health, technology.
 3. For each story:
    - Give the headline in Japanese first (translate it naturally)
-   - Then explain it briefly in English (2-3 sentences)
-   - Pick ONE interesting vocabulary word from the Japanese headline, formatted as: 📚 word (reading) = meaning
+   - Then explain it briefly in Japanese (2-3 sentences)
+   - Pick TWO to THREE interesting vocabulary word from the Japanese headline and your translation, formatted as: 📚 word (reading) = meaning
+   - Pick ONE use of grammar or pharase or tone that is interesting AND more advanced for the student level to explain to the student, formatted as: grammar form = meaning
 4. End with a short encouraging line about the day ahead in a mix of Japanese and English
 
 Student's Japanese level: ${level}
-Keep Japanese complexity appropriate for their level.
+Keep Japanese complexity appropriate for their level but you can mix a little bit more advanced vocabulary or grammar.
 Keep the whole message concise — this is a morning mobile message, not an essay.
 Use emojis naturally to make it feel warm and readable.`;
 
