@@ -9,8 +9,8 @@ const parser = new Parser({
 const FEEDS = [
   // Vietnam & Southeast Asia
   {
-    name: "VnExpress International",
-    url: "https://e.vnexpress.net/rss/news.rss",
+    name: "VnExpress News",
+    url: "https://vnexpress.net/rss/thoi-su.rss",
     region: "Vietnam",
   },
   {
