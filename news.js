@@ -5,7 +5,7 @@ const parser = new Parser({
   headers: { "User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)" },
 });
 
-// RSS feeds covering Vietnam, Southeast Asia, and global/international news
+// RSS feeds covering Vietnam, Asia, and global/international news
 const FEEDS = [
   // Vietnam & Southeast Asia
   {
@@ -14,29 +14,19 @@ const FEEDS = [
     region: "Vietnam",
   },
   {
-    name: "Tuoi Tre News",
-    url: "https://tuoitrenews.vn/rss/news.rss",
-    region: "Vietnam",
-  },
-  {
-    name: "Channel NewsAsia - SE Asia",
-    url: "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416",
-    region: "Southeast Asia",
+    name: "SCMP - Asia",
+    url: "https://www.scmp.com/rss/5/feed",
+    region: "Asia",
   },
   // Global / International Politics
   {
-    name: "BBC World",
-    url: "https://feeds.bbci.co.uk/news/world/rss.xml",
+    name: "NY Times World",
+    url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
     region: "Global",
   },
   {
-    name: "Reuters World News",
-    url: "https://feeds.reuters.com/reuters/worldNews",
-    region: "Global",
-  },
-  {
-    name: "Al Jazeera",
-    url: "https://www.aljazeera.com/xml/rss/all.xml",
+    name: "Financial Times World",
+    url: "https://www.ft.com/rss/home/international",
     region: "Global",
   },
 ];
