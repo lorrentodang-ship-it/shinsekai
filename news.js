@@ -5,25 +5,27 @@ const parser = new Parser({
   headers: { "User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)" },
 });
 
-// RSS feeds covering Vietnam, Asia, and global/international news
+// RSS feeds covering Vietnam, Asia, global/international affairs, and science news
 const FEEDS = [
-  // Vietnam & Southeast Asia
+  // Vietnam
   {
     name: "VnExpress News",
     url: "https://vnexpress.net/rss/thoi-su.rss",
     region: "Vietnam",
   },
+  // Asia
   {
     name: "SCMP - Asia",
     url: "https://www.scmp.com/rss/5/feed",
     region: "Asia",
   },
-  // Global / International Politics
+  // Science
   {
-    name: "NY Times World",
-    url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
-    region: "Global",
+    name: "Wired Science",
+    url: "https://www.wired.com/feed/category/science/latest/rss",
+    region: "Science",
   },
+  // Global / International Politics
   {
     name: "Financial Times World",
     url: "https://www.ft.com/rss/home/international",
