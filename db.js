@@ -1,9 +1,10 @@
 import Database from "better-sqlite3";
 
-let db;
+export let db;
 
 export function initDB() {
   db = new Database("tutor.db");
+  ...
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
