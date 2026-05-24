@@ -2,7 +2,7 @@ import cron from "node-cron";
 import Anthropic from "@anthropic-ai/sdk";
 import { fetchTopHeadlines, formatHeadlinesForClaude } from "./news.js";
 import { sendToChat } from "./bot.js";
-import { getUser } from "./db.js";
+import { getUser, db } from "./db.js";
 import { startTutorSession } from "./tutor.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -67,6 +67,21 @@ Use emojis naturally to make it feel warm and readable.`;
 async function triggerTutorSession() {
   console.log("✏️ 3pm Vietnam — triggering tutoring session");
   try {
+    // Skip if user already did a session today
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const recentSession = db.prepare(
+      `SELECT * FROM tutor_sessions 
+       WHERE chat_id = ? AND started_at >= ? 
+       ORDER BY started_at DESC LIMIT 1`
+    ).get(YOUR_CHAT_ID, todayStart.toISOString());
+
+    if (recentSession) {
+      console.log("⏭️ Skipping 3pm trigger — session already done today");
+      return;
+    }
+
     const user = getUser(YOUR_CHAT_ID);
     const name = user?.name || "friend";
 
