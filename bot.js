@@ -2,7 +2,8 @@ import TelegramBot from "node-telegram-bot-api";
 import express from "express";
 import { askClaude, generateScheduledMessage } from "./claude.js";
 import { getUser, upsertUser, clearHistory, getVocabLog } from "./db.js";
-import { generateNewsDigest } from "./scheduler.js";
+import { generateNewsDigest, triggerTutorSession } from "./scheduler.js";
+import { startTutorSession, handleSessionAnswer, skipSession } from "./tutor.js";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
@@ -19,6 +20,8 @@ const COMMANDS = [
   { command: "reset", description: "Clear conversation history and start fresh" },
   { command: "help", description: "Show all commands" },
   { command: "news", description: "Get today's news digest right now" },
+  { command: "practice", description: "Start a vocab & grammar session now" },
+  { command: "skipsession", description: "Skip the current practice session" },
 ];
 
 function registerHandlers() {
@@ -43,6 +46,23 @@ function registerHandlers() {
     const chatId = msg.chat.id.toString();
     await bot.sendMessage(chatId, "📰 Fetching your news digest... give me a moment!");
     await generateNewsDigest();
+  });
+// /practice — manual session trigger
+  bot.onText(/\/practice/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    upsertUser(chatId, { name: msg.from.first_name || "friend" });
+    await startTutorSession(chatId, sendToChat);
+  });
+
+  // /skipsession
+  bot.onText(/\/skipsession/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    const skipped = skipSession(chatId);
+    if (skipped) {
+      await bot.sendMessage(chatId, "⏭️ Session skipped! Chat freely or start a new one with /practice.");
+    } else {
+      await bot.sendMessage(chatId, "No active session to skip!");
+    }
   });
   
   // /level N3
@@ -126,11 +146,17 @@ function registerHandlers() {
     await bot.sendChatAction(chatId, "typing");
 
     try {
-      const reply = await askClaude(chatId, msg.text);
-      await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
+      // Check if there's an active session first
+      const handledBySession = await handleSessionAnswer(chatId, msg.text, sendToChat);
+
+      // If not in a session, route to normal Claude chat
+      if (!handledBySession) {
+        const reply = await askClaude(chatId, msg.text);
+        await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
+      }
     } catch (err) {
-      console.error("Claude error:", err);
-      await bot.sendMessage(chatId, "Hmm, something went wrong on my end. Try again in a moment! 🙏");
+      console.error("Message handling error:", err);
+      await bot.sendMessage(chatId, "Hmm, something went wrong. Try again in a moment! 🙏");
     }
   });
 }
