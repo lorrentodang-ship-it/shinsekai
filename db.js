@@ -4,7 +4,6 @@ export let db;
 
 export function initDB() {
   db = new Database("tutor.db");
-  ...
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -34,7 +33,8 @@ export function initDB() {
       confidence INTEGER DEFAULT 0,
       last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
     );
-  CREATE TABLE IF NOT EXISTS tutor_sessions (
+
+    CREATE TABLE IF NOT EXISTS tutor_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       chat_id TEXT,
       session_type TEXT DEFAULT 'vocab_grammar',
@@ -61,8 +61,9 @@ export function initDB() {
   `);
 
   console.log("✅ Database initialized");
+}
 
-// User operations
+// ── User ──────────────────────────────────────────────
 export function getUser(chatId) {
   return db.prepare("SELECT * FROM users WHERE chat_id = ?").get(chatId);
 }
@@ -70,18 +71,15 @@ export function getUser(chatId) {
 export function upsertUser(chatId, data = {}) {
   const existing = getUser(chatId);
   if (!existing) {
-    db.prepare(
-      "INSERT INTO users (chat_id, name) VALUES (?, ?)"
-    ).run(chatId, data.name || "friend");
+    db.prepare("INSERT INTO users (chat_id, name) VALUES (?, ?)").run(chatId, data.name || "friend");
   } else if (Object.keys(data).length > 0) {
     const fields = Object.keys(data).map(k => `${k} = ?`).join(", ");
-    db.prepare(`UPDATE users SET ${fields} WHERE chat_id = ?`)
-      .run(...Object.values(data), chatId);
+    db.prepare(`UPDATE users SET ${fields} WHERE chat_id = ?`).run(...Object.values(data), chatId);
   }
   return getUser(chatId);
 }
 
-// Message history (last 20 messages for context)
+// ── Message history ───────────────────────────────────
 export function getHistory(chatId, limit = 20) {
   return db.prepare(
     "SELECT role, content FROM messages WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?"
@@ -89,39 +87,25 @@ export function getHistory(chatId, limit = 20) {
 }
 
 export function saveMessage(chatId, role, content) {
-  db.prepare(
-    "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)"
-  ).run(chatId, role, content);
+  db.prepare("INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)").run(chatId, role, content);
 }
 
 export function clearHistory(chatId) {
   db.prepare("DELETE FROM messages WHERE chat_id = ?").run(chatId);
 }
 
-// Vocab log
+// ── Vocab log ─────────────────────────────────────────
 export function logVocab(chatId, word, reading, meaning) {
-  const existing = db.prepare(
-    "SELECT * FROM vocab_log WHERE chat_id = ? AND word = ?"
-  ).get(chatId, word);
-
+  const existing = db.prepare("SELECT * FROM vocab_log WHERE chat_id = ? AND word = ?").get(chatId, word);
   if (existing) {
-    db.prepare(
-      "UPDATE vocab_log SET times_seen = times_seen + 1, last_seen = CURRENT_TIMESTAMP WHERE id = ?"
-    ).run(existing.id);
+    db.prepare("UPDATE vocab_log SET times_seen = times_seen + 1, last_seen = CURRENT_TIMESTAMP WHERE id = ?").run(existing.id);
   } else {
-    db.prepare(
-      "INSERT INTO vocab_log (chat_id, word, reading, meaning) VALUES (?, ?, ?, ?)"
-    ).run(chatId, word, reading, meaning);
+    db.prepare("INSERT INTO vocab_log (chat_id, word, reading, meaning) VALUES (?, ?, ?, ?)").run(chatId, word, reading, meaning);
   }
 }
 
-export function getVocabLog(chatId, limit = 10) {
-  return db.prepare(
-    "SELECT * FROM vocab_log WHERE chat_id = ? ORDER BY last_seen DESC LIMIT ?"
-  ).all(chatId, limit);
-}
-
 export function updateVocabConfidence(chatId, word, correct) {
+  // correct = true → confidence +1, wrong → confidence -1 (min 0)
   const existing = db.prepare("SELECT * FROM vocab_log WHERE chat_id = ? AND word = ?").get(chatId, word);
   if (existing) {
     const newConfidence = Math.max(0, existing.confidence + (correct ? 1 : -1));
@@ -129,12 +113,18 @@ export function updateVocabConfidence(chatId, word, correct) {
   }
 }
 
+export function getVocabLog(chatId, limit = 10) {
+  return db.prepare("SELECT * FROM vocab_log WHERE chat_id = ? ORDER BY last_seen DESC LIMIT ?").all(chatId, limit);
+}
+
+// Words with low confidence = most need review
 export function getWeakVocab(chatId, limit = 5) {
   return db.prepare(
     "SELECT * FROM vocab_log WHERE chat_id = ? ORDER BY confidence ASC, last_seen ASC LIMIT ?"
   ).all(chatId, limit);
 }
 
+// ── Tutor sessions ────────────────────────────────────
 export function createSession(chatId, questionsJson, totalQuestions = 8) {
   const result = db.prepare(
     `INSERT INTO tutor_sessions (chat_id, questions_json, total_questions) VALUES (?, ?, ?)`
