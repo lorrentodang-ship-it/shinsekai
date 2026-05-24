@@ -30,12 +30,36 @@ export function initDB() {
       reading TEXT,
       meaning TEXT,
       times_seen INTEGER DEFAULT 1,
+      confidence INTEGER DEFAULT 0,
       last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  CREATE TABLE IF NOT EXISTS tutor_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT,
+      session_type TEXT DEFAULT 'vocab_grammar',
+      state TEXT DEFAULT 'active',
+      current_question INTEGER DEFAULT 0,
+      total_questions INTEGER DEFAULT 8,
+      correct INTEGER DEFAULT 0,
+      incorrect INTEGER DEFAULT 0,
+      questions_json TEXT,
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      ended_at DATETIME
+    );
+
+    CREATE TABLE IF NOT EXISTS session_answers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER,
+      chat_id TEXT,
+      question TEXT,
+      correct_answer TEXT,
+      user_answer TEXT,
+      was_correct INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
   console.log("✅ Database initialized");
-}
 
 // User operations
 export function getUser(chatId) {
@@ -93,5 +117,56 @@ export function logVocab(chatId, word, reading, meaning) {
 export function getVocabLog(chatId, limit = 10) {
   return db.prepare(
     "SELECT * FROM vocab_log WHERE chat_id = ? ORDER BY last_seen DESC LIMIT ?"
+  ).all(chatId, limit);
+}
+
+export function updateVocabConfidence(chatId, word, correct) {
+  const existing = db.prepare("SELECT * FROM vocab_log WHERE chat_id = ? AND word = ?").get(chatId, word);
+  if (existing) {
+    const newConfidence = Math.max(0, existing.confidence + (correct ? 1 : -1));
+    db.prepare("UPDATE vocab_log SET confidence = ?, last_seen = CURRENT_TIMESTAMP WHERE id = ?").run(newConfidence, existing.id);
+  }
+}
+
+export function getWeakVocab(chatId, limit = 5) {
+  return db.prepare(
+    "SELECT * FROM vocab_log WHERE chat_id = ? ORDER BY confidence ASC, last_seen ASC LIMIT ?"
+  ).all(chatId, limit);
+}
+
+export function createSession(chatId, questionsJson, totalQuestions = 8) {
+  const result = db.prepare(
+    `INSERT INTO tutor_sessions (chat_id, questions_json, total_questions) VALUES (?, ?, ?)`
+  ).run(chatId, JSON.stringify(questionsJson), totalQuestions);
+  return result.lastInsertRowid;
+}
+
+export function getActiveSession(chatId) {
+  return db.prepare(
+    "SELECT * FROM tutor_sessions WHERE chat_id = ? AND state = 'active' ORDER BY started_at DESC LIMIT 1"
+  ).get(chatId);
+}
+
+export function updateSession(sessionId, data) {
+  const fields = Object.keys(data).map(k => `${k} = ?`).join(", ");
+  db.prepare(`UPDATE tutor_sessions SET ${fields} WHERE id = ?`).run(...Object.values(data), sessionId);
+}
+
+export function endSession(sessionId) {
+  db.prepare("UPDATE tutor_sessions SET state = 'complete', ended_at = CURRENT_TIMESTAMP WHERE id = ?").run(sessionId);
+}
+
+export function logAnswer(sessionId, chatId, question, correctAnswer, userAnswer, wasCorrect) {
+  db.prepare(
+    `INSERT INTO session_answers (session_id, chat_id, question, correct_answer, user_answer, was_correct)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(sessionId, chatId, question, correctAnswer, userAnswer, wasCorrect ? 1 : 0);
+}
+
+export function getSessionStats(chatId, limit = 7) {
+  return db.prepare(
+    `SELECT correct, incorrect, total_questions, started_at 
+     FROM tutor_sessions WHERE chat_id = ? AND state = 'complete' 
+     ORDER BY started_at DESC LIMIT ?`
   ).all(chatId, limit);
 }
