@@ -1,9 +1,10 @@
 import cron from "node-cron";
 import Anthropic from "@anthropic-ai/sdk";
 import { fetchTopHeadlines, formatHeadlinesForClaude } from "./news.js";
-import { sendToChat } from "./bot.js";
+import { sendToChat, bot } from "./bot.js";
 import { getUser, db } from "./db.js";
 import { startTutorSession } from "./tutor.js";
+import { startListeningSession } from "./listening.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -85,38 +86,54 @@ async function triggerTutorSession() {
     const user = getUser(YOUR_CHAT_ID);
     const name = user?.name || "friend";
 
-    // Send a warm opener before the session starts
     await sendToChat(YOUR_CHAT_ID,
       `こんにちは、${name}！🌸 Time for your afternoon Japanese practice!\n\nReady for today's vocab & grammar session? Let's go! 💪`
     );
 
-    // Small delay so the opener lands first
     await new Promise(r => setTimeout(r, 2000));
-
     await startTutorSession(YOUR_CHAT_ID, sendToChat);
+
   } catch (err) {
     console.error("❌ Tutor session error:", err);
     await sendToChat(YOUR_CHAT_ID, "Sorry, I couldn't start your practice session. Try /practice manually! 🙏");
   }
 }
 
+// ── Evening listening session ─────────────────────────
+async function triggerListeningSession() {
+  console.log("🎧 9pm Vietnam — triggering listening session");
+  try {
+    await startListeningSession(YOUR_CHAT_ID, bot);
+  } catch (err) {
+    console.error("❌ Listening session error:", err);
+    await sendToChat(YOUR_CHAT_ID, "申し訳ありません！リスニングセッションを開始できませんでした。/listening で試してください！🙏");
+  }
+}
+
 // ── Scheduler ─────────────────────────────────────────
 export function startScheduler() {
-  // 7:00am Vietnam time daily
+  // 7:00am Vietnam time
   cron.schedule("0 7 * * *", async () => {
     console.log("⏰ 7am Vietnam — sending morning news digest");
     await generateNewsDigest();
   }, { timezone: "Asia/Ho_Chi_Minh" });
 
-  // 3:00pm Vietnam time daily
+  // 3:00pm Vietnam time
   cron.schedule("0 15 * * *", async () => {
     console.log("⏰ 3pm Vietnam — starting tutoring session");
     await triggerTutorSession();
   }, { timezone: "Asia/Ho_Chi_Minh" });
 
+  // 9:00pm Vietnam time
+  cron.schedule("0 21 * * *", async () => {
+    console.log("⏰ 9pm Vietnam — starting listening session");
+    await triggerListeningSession();
+  }, { timezone: "Asia/Ho_Chi_Minh" });
+
   console.log("✅ Scheduler started:");
   console.log("   📰 News digest at 7:00am Vietnam time");
   console.log("   ✏️  Tutoring session at 3:00pm Vietnam time");
+  console.log("   🎧 Listening session at 9:00pm Vietnam time");
 }
 
-export { generateNewsDigest, triggerTutorSession };
+export { generateNewsDigest, triggerTutorSession, triggerListeningSession };
