@@ -58,6 +58,16 @@ export function initDB() {
       was_correct INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS listening_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT,
+      session_data TEXT,
+      current_part INTEGER DEFAULT 0,
+      state TEXT DEFAULT 'active',
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      ended_at DATETIME
+    );
   `);
 
   console.log("✅ Database initialized");
