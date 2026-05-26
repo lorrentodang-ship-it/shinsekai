@@ -262,6 +262,17 @@ export async function handleListeningAnswer(chatId, userAnswer, bot) {
 
     const closing = "お疲れ様でした！今夜のリスニング練習が終わりました。よく頑張りましたね！また明日も一緒に練習しましょう。おやすみなさい。";
     await sendVoiceMessage(bot, chatId, closing, "closing");
+
+    // Send transcript after closing
+    await new Promise(r => setTimeout(r, 2000));
+    const transcript = `📝 *今夜のトランスクリプト*\n\n` +
+      `*🎭 パート1: ${dailyDialogue.scenario_label}*\n${dailyDialogue.dialogue}\n\n` +
+      `❓ ${dailyDialogue.question}\n` +
+      `✅ ${dailyDialogue.correct_answer}\n\n` +
+      `*📰 パート2: ${newsDialogue.news_topic}*\n${newsDialogue.dialogue}\n\n` +
+      `❓ ${newsDialogue.question}\n` +
+      `✅ ${newsDialogue.correct_answer}`;
+    await bot.sendMessage(chatId, transcript, { parse_mode: "Markdown" });
   }
 
   return true; // handled
