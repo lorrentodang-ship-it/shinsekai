@@ -4,6 +4,7 @@ import { askClaude, generateScheduledMessage } from "./claude.js";
 import { getUser, upsertUser, clearHistory, getVocabLog } from "./db.js";
 import { generateNewsDigest, triggerTutorSession } from "./scheduler.js";
 import { startTutorSession, handleSessionAnswer, skipSession } from "./tutor.js";
+import { startListeningSession, handleListeningAnswer, endListeningSession, getListeningSession } from "./listening.js";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
@@ -14,14 +15,16 @@ export let bot;
 
 const COMMANDS = [
   { command: "start", description: "Meet your Japanese tutor Hana" },
+  { command: "news", description: "Get today's news digest right now" },
+  { command: "practice", description: "Start a vocab & grammar session now" },
+  { command: "skipsession", description: "Skip the current practice session" },
+  { command: "listening", description: "Start tonight's listening session now" },
+  { command: "skiplatest", description: "Skip the current listening session" },
   { command: "level", description: "Set your Japanese level (e.g. /level N4)" },
   { command: "style", description: "Set tutor style: strict, encouraging, casual" },
   { command: "vocab", description: "Review your recent vocabulary" },
   { command: "reset", description: "Clear conversation history and start fresh" },
   { command: "help", description: "Show all commands" },
-  { command: "news", description: "Get today's news digest right now" },
-  { command: "practice", description: "Start a vocab & grammar session now" },
-  { command: "skipsession", description: "Skip the current practice session" },
 ];
 
 function registerHandlers() {
@@ -30,7 +33,6 @@ function registerHandlers() {
     const chatId = msg.chat.id.toString();
     const firstName = msg.from.first_name || "friend";
     upsertUser(chatId, { name: firstName });
-
     const greeting = await generateScheduledMessage(
       chatId,
       `The student just started the bot for the first time. Their name is ${firstName}. 
@@ -41,13 +43,14 @@ function registerHandlers() {
     await bot.sendMessage(chatId, greeting, { parse_mode: "Markdown" });
   });
 
- // /news - manual trigger
+  // /news
   bot.onText(/\/news/, async (msg) => {
     const chatId = msg.chat.id.toString();
     await bot.sendMessage(chatId, "📰 Fetching your news digest... give me a moment!");
     await generateNewsDigest();
   });
-// /practice — manual session trigger
+
+  // /practice — manual session trigger
   bot.onText(/\/practice/, async (msg) => {
     const chatId = msg.chat.id.toString();
     upsertUser(chatId, { name: msg.from.first_name || "friend" });
@@ -64,20 +67,16 @@ function registerHandlers() {
       await bot.sendMessage(chatId, "No active session to skip!");
     }
   });
-  
+
   // /level N3
   bot.onText(/\/level (.+)/, async (msg, match) => {
     const chatId = msg.chat.id.toString();
     const level = match[1].trim();
     const validLevels = ["beginner", "N5", "N4", "N3", "N2", "N1"];
-
     if (!validLevels.includes(level)) {
-      await bot.sendMessage(chatId,
-        `Please use one of these levels: ${validLevels.join(", ")}\nExample: /level N4`
-      );
+      await bot.sendMessage(chatId, `Please use one of these levels: ${validLevels.join(", ")}\nExample: /level N4`);
       return;
     }
-
     upsertUser(chatId, { japanese_level: level });
     const reply = await generateScheduledMessage(
       chatId,
@@ -93,11 +92,8 @@ function registerHandlers() {
     const chatId = msg.chat.id.toString();
     const style = match[1].trim().toLowerCase();
     const validStyles = ["strict", "encouraging", "casual"];
-
     if (!validStyles.includes(style)) {
-      await bot.sendMessage(chatId,
-        `Please use one of: ${validStyles.join(", ")}\nExample: /style casual`
-      );
+      await bot.sendMessage(chatId, `Please use one of: ${validStyles.join(", ")}\nExample: /style casual`);
       return;
     }
     upsertUser(chatId, { tutor_style: style });
@@ -108,15 +104,33 @@ function registerHandlers() {
   bot.onText(/\/vocab/, async (msg) => {
     const chatId = msg.chat.id.toString();
     const vocab = getVocabLog(chatId, 15);
-
     if (vocab.length === 0) {
-      await bot.sendMessage(chatId, "No vocabulary logged yet! Start chatting and I'll track new words for you 📚");
+      await bot.sendMessage(chatId, "No vocabulary logged yet! Start a session with /practice 📚");
       return;
     }
     const list = vocab.map(v =>
-      `• ${v.word} (${v.reading}) = ${v.meaning} — seen ${v.times_seen}x`
+      `• ${v.word} (${v.reading}) = ${v.meaning} — seen ${v.times_seen}x, confidence: ${v.confidence}`
     ).join("\n");
     await bot.sendMessage(chatId, `📚 *Your recent vocabulary:*\n\n${list}`, { parse_mode: "Markdown" });
+  });
+
+  // /listening — manual trigger
+  bot.onText(/\/listening/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    upsertUser(chatId, { name: msg.from.first_name || "friend" });
+    await startListeningSession(chatId, bot);
+  });
+
+  // /skiplatest — skip active listening session
+  bot.onText(/\/skiplatest/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    const session = getListeningSession(chatId);
+    if (session) {
+      endListeningSession(session.id);
+      await bot.sendMessage(chatId, "⏭️ リスニングセッションをスキップしました！/listening でまたいつでも始められます。");
+    } else {
+      await bot.sendMessage(chatId, "アクティブなリスニングセッションはありません。");
+    }
   });
 
   // /reset
@@ -133,7 +147,7 @@ function registerHandlers() {
     await bot.sendMessage(chatId, `🤖 *Hana's Commands:*\n\n${helpText}`, { parse_mode: "Markdown" });
   });
 
-  // All regular messages → Claude
+  // All regular messages
   bot.on("message", async (msg) => {
     if (msg.text?.startsWith("/")) return;
     if (!msg.text) {
@@ -146,14 +160,18 @@ function registerHandlers() {
     await bot.sendChatAction(chatId, "typing");
 
     try {
-      // Check if there's an active session first
-      const handledBySession = await handleSessionAnswer(chatId, msg.text, sendToChat);
+      // Check listening session first (9pm)
+      const handledByListening = await handleListeningAnswer(chatId, msg.text, bot);
+      if (handledByListening) return;
 
-      // If not in a session, route to normal Claude chat
-      if (!handledBySession) {
-        const reply = await askClaude(chatId, msg.text);
-        await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
-      }
+      // Check vocab/grammar session (3pm)
+      const handledBySession = await handleSessionAnswer(chatId, msg.text, sendToChat);
+      if (handledBySession) return;
+
+      // Otherwise route to normal Claude chat
+      const reply = await askClaude(chatId, msg.text);
+      await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
+
     } catch (err) {
       console.error("Message handling error:", err);
       await bot.sendMessage(chatId, "Hmm, something went wrong. Try again in a moment! 🙏");
@@ -163,7 +181,6 @@ function registerHandlers() {
 
 export async function startBot() {
   if (RAILWAY_URL) {
-    // --- WEBHOOK MODE (production on Railway) ---
     console.log("🔗 Starting in webhook mode:", RAILWAY_URL);
 
     const app = express();
@@ -184,7 +201,6 @@ export async function startBot() {
     console.log("✅ Webhook set:", `${RAILWAY_URL}/bot${TOKEN}`);
 
   } else {
-    // --- POLLING MODE (local development) ---
     console.log("🔄 Starting in polling mode (local)");
     bot = new TelegramBot(TOKEN, { polling: true });
   }
