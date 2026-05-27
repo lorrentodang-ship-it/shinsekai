@@ -37,7 +37,7 @@ async function generateDailyDialogue(level) {
 
 Scenario: ${scenario}
 Student level: ${level} (N4-N3 range)
-Duration: the dialogue should take about 15-20 seconds to read aloud naturally
+Duration: the dialogue should take about 20-30 seconds to read aloud naturally
 Format: back-and-forth conversation between 2 people (label them A and B)
 Language difficulty: natural but appropriate for ${level} level — use kanji with context clues
 
@@ -74,8 +74,8 @@ ${headlinesText}
 
 Pick ONE interesting story and write a short dialogue or narration about it.
 Student level: ${level} (N4-N3 range)
-Duration: 15-20 seconds to read aloud naturally
-Style: either a news anchor narration OR two people discussing the news story
+Duration: 30-40 seconds to read aloud naturally
+Style: a single news anchor narration only — one speaker summarizing the story clearly
 Language: natural N4-N3 Japanese
 
 After the dialogue, generate ONE comprehension question about it.
