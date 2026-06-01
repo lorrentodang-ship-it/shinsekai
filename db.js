@@ -68,6 +68,31 @@ export function initDB() {
       started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       ended_at DATETIME
     );
+
+    CREATE TABLE IF NOT EXISTS vocab_master (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      word TEXT NOT NULL,
+      reading TEXT NOT NULL,
+      meaning TEXT NOT NULL,
+      level TEXT NOT NULL,
+      frequency_rank INTEGER DEFAULT 999,
+      UNIQUE(word, level)
+    );
+
+    CREATE TABLE IF NOT EXISTS user_vocab (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      vocab_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'learning',
+      confidence INTEGER DEFAULT 0,
+      next_review DATETIME,
+      times_seen INTEGER DEFAULT 0,
+      times_correct INTEGER DEFAULT 0,
+      times_wrong INTEGER DEFAULT 0,
+      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(chat_id, vocab_id),
+      FOREIGN KEY(vocab_id) REFERENCES vocab_master(id)
+    );
   `);
 
   console.log("✅ Database initialized");
