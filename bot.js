@@ -5,6 +5,7 @@ import { getUser, upsertUser, clearHistory, getVocabLog } from "./db.js";
 import { generateNewsDigest, triggerTutorSession } from "./scheduler.js";
 import { startTutorSession, handleSessionAnswer, skipSession } from "./tutor.js";
 import { startListeningSession, handleListeningAnswer, endListeningSession, getListeningSession } from "./listening.js";
+import { getUserVocabStats, getTotalVocabCount } from "./srs.js";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
@@ -22,6 +23,7 @@ const COMMANDS = [
   { command: "skiplatest", description: "Skip the current listening session" },
   { command: "level", description: "Set your Japanese level (e.g. /level N4)" },
   { command: "style", description: "Set tutor style: strict, encouraging, casual" },
+  { command: "progress", description: "See your overall vocabulary progress" },
   { command: "vocab", description: "Review your recent vocabulary" },
   { command: "reset", description: "Clear conversation history and start fresh" },
   { command: "help", description: "Show all commands" },
@@ -98,6 +100,38 @@ function registerHandlers() {
     }
     upsertUser(chatId, { tutor_style: style });
     await bot.sendMessage(chatId, `✅ Tutor style set to *${style}*!`, { parse_mode: "Markdown" });
+  });
+
+  // /progress
+  bot.onText(/\/progress/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    const stats = getUserVocabStats(chatId);
+    const totals = getTotalVocabCount();
+
+    if (!stats || stats.total_seen === 0) {
+      await bot.sendMessage(chatId, "No vocabulary progress yet! Start with /practice to begin learning 📚");
+      return;
+    }
+
+    const n4Pct = totals.n4_total > 0 ? Math.round((stats.n4_seen / totals.n4_total) * 100) : 0;
+    const n3Pct = totals.n3_total > 0 ? Math.round((stats.n3_seen / totals.n3_total) * 100) : 0;
+    const totalPct = totals.total > 0 ? Math.round((stats.total_seen / totals.total) * 100) : 0;
+
+    const message = `📊 *Your Vocabulary Progress*
+
+🎯 Overall: ${stats.total_seen}/${totals.total} words (${totalPct}%)
+
+📘 N4: ${stats.n4_seen}/${totals.n4_total} (${n4Pct}%)
+📗 N3: ${stats.n3_seen}/${totals.n3_total} (${n3Pct}%)
+
+📈 Status breakdown:
+  🌱 Learning: ${stats.learning || 0} words
+  🔄 Reviewing: ${stats.reviewing || 0} words
+  ⭐ Mastered: ${stats.mastered || 0} words
+
+${stats.mastered > 0 ? "素晴らしい！Keep it up! 🎉" : "がんばって！Every session moves you forward! 💪"}`;
+
+    await bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
   });
 
   // /vocab
