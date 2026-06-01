@@ -1,54 +1,49 @@
 import Anthropic from "@anthropic-ai/sdk";
 import {
-  getUser, getWeakVocab, getVocabLog,
-  createSession, getActiveSession, updateSession,
-  endSession, logAnswer, updateVocabConfidence
+  getUser, createSession, getActiveSession, updateSession,
+  endSession, logAnswer
 } from "./db.js";
+import { getSessionVocab, buildVocabPromptSection } from "./vocab_picker.js";
+import { updateWordAfterReview } from "./srs.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ── Generate a full set of questions ─────────────────
 async function generateQuestions(chatId) {
   const user = getUser(chatId);
-  const level = user?.japanese_level || "beginner";
-  const weakVocab = getWeakVocab(chatId, 5);
-  const recentVocab = getVocabLog(chatId, 10);
+  const level = user?.japanese_level || "N4";
 
-  const weakWordsText = weakVocab.length > 0
-    ? `Words this student has struggled with (prioritize reviewing these):\n${weakVocab.map(v => `- ${v.word} (${v.reading}) = ${v.meaning}`).join("\n")}`
-    : "No weak words yet — introduce fresh vocabulary.";
-
-  const recentWordsText = recentVocab.length > 0
-    ? `Words recently seen (avoid repeating these unless they are weak):\n${recentVocab.map(v => v.word).join(", ")}`
-    : "";
+  // Get today's vocab from the SRS database
+  const sessionVocab = getSessionVocab(chatId);
+  const vocabSection = buildVocabPromptSection(sessionVocab);
 
   const prompt = `You are Hana, a Japanese tutor. Generate a tutoring session for a student at JLPT level ${level}.
 
-${weakWordsText}
-${recentWordsText}
+${vocabSection}
 
 Create exactly 8 questions that mix vocabulary and grammar. Use a variety of question types:
-- Fill in the blank (vocabulary)
+- Fill in the blank (vocabulary) — use the specific words listed above
 - Choose the correct particle (grammar)
-- Translate a short phrase (vocab + grammar)
-- Conjugate a verb (grammar)
-- Multiple choice reading comprehension (1-2 questions)
+- Translate a short phrase using today's vocab
+- Conjugate a verb from today's list (grammar)
+- Sentence construction using today's words
 
 Format your response as a JSON array only — no preamble, no markdown, just the raw JSON:
 [
   {
     "type": "fill_blank",
-    "question": "______は私の猫です。(My cat is cute)",
-    "answer": "かわいい",
-    "hint": "adjective meaning cute",
-    "vocab_word": "かわいい",
-    "vocab_reading": "かわいい",
-    "vocab_meaning": "cute"
-  },
-  ...
+    "question": "毎日野菜を______います。(I eat vegetables every day)",
+    "answer": "食べて",
+    "hint": "verb: to eat, te-form",
+    "vocab_word": "食べる",
+    "vocab_reading": "たべる",
+    "vocab_meaning": "to eat",
+    "vocab_id": 42
+  }
 ]
 
-Each question must have: type, question, answer, hint, vocab_word, vocab_reading, vocab_meaning.
+Each question MUST have: type, question, answer, hint, vocab_word, vocab_reading, vocab_meaning, vocab_id.
+The vocab_id must match the id from the word list above.
 Keep questions appropriate for ${level} level. Make them feel natural and useful for daily life.`;
 
   const response = await client.messages.create({
@@ -144,9 +139,9 @@ Reply with JSON only:
   // Log the answer
   logAnswer(session.id, chatId, q.question, q.answer, userAnswer, wasCorrect);
 
-  // Update vocab confidence
-  if (q.vocab_word) {
-    updateVocabConfidence(chatId, q.vocab_word, wasCorrect);
+  // Update SRS schedule for this word
+  if (q.vocab_id) {
+    updateWordAfterReview(chatId, q.vocab_id, wasCorrect);
   }
 
   // Update session score
