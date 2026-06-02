@@ -21,7 +21,7 @@ async function generateQuestions(chatId) {
 
 ${vocabSection}
 
-Create exactly 8 questions that mix vocabulary and grammar. Use a variety of question types:
+Create exactly 10 questions that mix vocabulary and grammar. Use a variety of question types:
 - Fill in the blank (vocabulary) — use the specific words listed above
 - Choose the correct particle (grammar)
 - Translate a short phrase using today's vocab
@@ -48,7 +48,7 @@ Keep questions appropriate for ${level} level. Make them feel natural and useful
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
-    max_tokens: 2000,
+    max_tokens: 2500,
     messages: [{ role: "user", content: prompt }],
   });
 
