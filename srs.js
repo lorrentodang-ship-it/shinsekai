@@ -11,7 +11,8 @@ const REVIEW_INTERVALS = {
 };
 
 const MAX_CONFIDENCE = 5;
-const NEW_WORDS_PER_DAY = 5; // 5 new words daily as agreed
+const NEW_WORDS_PER_DAY = 10;  // 10 new words daily
+const MAX_N4_PER_DAY = 7;      // up to 7 from N4, rest from N3
 
 // ── Get words due for review today ───────────────────
 export function getWordsDueForReview(chatId, limit = 5) {
@@ -29,34 +30,47 @@ export function getWordsDueForReview(chatId, limit = 5) {
 }
 
 // ── Get new words not yet introduced ─────────────────
+// Up to MAX_N4_PER_DAY from N4 first, then fill remainder with N3.
+// Once N4 is exhausted, automatically switches to all N3.
 export function getNewWords(chatId, limit = NEW_WORDS_PER_DAY) {
-  // First pull from N4 (review level), then N3 (target level)
-  // Words not yet in user_vocab for this user
-  return db.prepare(`
+  const n4Words = db.prepare(`
     SELECT vm.*
     FROM vocab_master vm
     WHERE vm.id NOT IN (
       SELECT vocab_id FROM user_vocab WHERE chat_id = ?
     )
-    ORDER BY 
-      CASE vm.level WHEN 'N4' THEN 1 WHEN 'N3' THEN 2 ELSE 3 END,
-      vm.frequency_rank ASC
+    AND vm.level = 'N4'
+    ORDER BY vm.frequency_rank ASC
     LIMIT ?
-  `).all(chatId, limit);
+  `).all(chatId, Math.min(limit, MAX_N4_PER_DAY));
+
+  const n3Limit = limit - n4Words.length;
+  const n3Words = n3Limit > 0 ? db.prepare(`
+    SELECT vm.*
+    FROM vocab_master vm
+    WHERE vm.id NOT IN (
+      SELECT vocab_id FROM user_vocab WHERE chat_id = ?
+    )
+    AND vm.level = 'N3'
+    ORDER BY vm.frequency_rank ASC
+    LIMIT ?
+  `).all(chatId, n3Limit) : [];
+
+  return [...n4Words, ...n3Words];
 }
 
 // ── Get today's full word list for session ────────────
 export function getTodaysSessionWords(chatId) {
   const dueWords = getWordsDueForReview(chatId, 5);
-  const newWords = getNewWords(chatId, NEW_WORDS_PER_DAY - Math.min(dueWords.length, 3));
+  const newWords = getNewWords(chatId, NEW_WORDS_PER_DAY - Math.min(dueWords.length, 5));
 
-  // Ensure we have 8 total — fill with more due words if needed
+  // Cap at 10 total words
   const allWords = [...dueWords.slice(0, 5), ...newWords];
 
   return {
     dueWords: dueWords.slice(0, 5),
     newWords,
-    allWords: allWords.slice(0, 8),
+    allWords: allWords.slice(0, 10),
   };
 }
 
@@ -134,7 +148,6 @@ export function markWordEncountered(chatId, word) {
   ).get(chatId, vocabEntry.id);
 
   if (!existing) {
-    // Introduce it with a same-day review (tonight's session)
     const tonight = new Date();
     tonight.setHours(21, 0, 0, 0); // 9pm
 
