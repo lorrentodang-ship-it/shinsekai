@@ -5,6 +5,7 @@ import { sendToChat, bot } from "./bot.js";
 import { getUser, db } from "./db.js";
 import { startTutorSession } from "./tutor.js";
 import { startListeningSession } from "./listening.js";
+import { sendVoiceMessage } from "./tts.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -35,27 +36,61 @@ Here are today's top headlines:
 
 ${headlinesText}
 
-Create a morning news digest message that:
-1. Starts with a warm おはようございます greeting with today's energy
-2. Covers 4-5 of the most interesting/important stories across Vietnam, Asia, global international affairs, and science
-3. For each story:
-   - Give the headline in Japanese first (translate it naturally)
-   - Then explain it briefly in Japanese (1-2 sentences)
-   - Pick 2-3 interesting vocabulary words from the Japanese headline and your summary, formatted as: 📚 word (reading) = meaning
-4. End with a short line about the day ahead in a mix of Japanese and English, encouraging or cautioning related to the weather of the day.
+Create a morning news digest. Respond in JSON only — no markdown, no preamble:
+{
+  "greeting": "warm おはようございます opening line with today's energy (1-2 sentences)",
+  "stories": [
+    {
+      "headline_ja": "headline translated naturally into Japanese",
+      "summary_ja": "1-2 sentence explanation in Japanese",
+      "vocab": [
+        {"word": "単語", "reading": "たんご", "meaning": "vocabulary word"}
+      ],
+      "audio_text": "the headline and summary combined as natural spoken Japanese — NO vocab lists, just the story text, written to sound natural when read aloud"
+    }
+  ],
+  "closing": "short encouraging closing line mixing Japanese and English, referencing today's weather or energy"
+}
 
+Include 4-5 stories covering Vietnam, Asia, global international affairs, and science.
 Student's Japanese level: ${level}
 Keep Japanese complexity appropriate for their level.
-Keep the whole message concise — this is a morning mobile message, not an essay.
-Use emojis naturally to make it feel warm and readable.`;
+Pick 2-3 vocab words per story.
+Keep audio_text clean — no bullet points, no emoji, just natural spoken sentences.`;
 
     const response = await client.messages.create({
       model: "claude-sonnet-4-5",
-      max_tokens: 1500,
+      max_tokens: 2000,
       messages: [{ role: "user", content: prompt }],
     });
 
-    await sendToChat(YOUR_CHAT_ID, response.content[0].text);
+    const raw = response.content[0].text.replace(/```json|```/g, "").trim();
+    const digest = JSON.parse(raw);
+
+    // Send greeting
+    await sendToChat(YOUR_CHAT_ID, digest.greeting);
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Send each story: text first, then audio
+    for (let i = 0; i < digest.stories.length; i++) {
+      const story = digest.stories[i];
+
+      // Build text message with vocab (for reading)
+      const vocabLines = story.vocab
+        .map(v => `📚 ${v.word} (${v.reading}) = ${v.meaning}`)
+        .join("\n");
+
+      const textMessage = `*${story.headline_ja}*\n\n${story.summary_ja}\n\n${vocabLines}`;
+      await sendToChat(YOUR_CHAT_ID, textMessage);
+      await new Promise(r => setTimeout(r, 500));
+
+      // Send audio — clean story text only, no vocab
+      await sendVoiceMessage(bot, YOUR_CHAT_ID, story.audio_text, `news_story_${i}`);
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    // Send closing
+    await sendToChat(YOUR_CHAT_ID, digest.closing);
     console.log("✅ Morning news digest sent!");
 
   } catch (err) {
