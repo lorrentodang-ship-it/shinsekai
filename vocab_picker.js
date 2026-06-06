@@ -79,3 +79,17 @@ export function getTodaysNewWords(chatId) {
     LIMIT 5
   `).all(chatId, today.toISOString());
 }
+
+// ── Get N3-only words for the dedicated N3 vocab section ─
+export function getN3OnlyVocab(chatId, limit = 5) {
+  return db.prepare(`
+    SELECT uv.vocab_id, vm.word, vm.reading, vm.meaning, vm.level,
+           uv.confidence, uv.next_review, uv.times_seen
+    FROM user_vocab uv
+    JOIN vocab_master vm ON uv.vocab_id = vm.id
+    WHERE uv.chat_id = ?
+      AND vm.level = 'N3'
+    ORDER BY uv.confidence ASC, uv.next_review ASC
+    LIMIT ?
+  `).all(chatId, limit);
+}
