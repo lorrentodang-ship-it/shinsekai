@@ -6,6 +6,7 @@ import { generateNewsDigest, triggerTutorSession } from "./scheduler.js";
 import { startTutorSession, handleSessionAnswer, skipSession } from "./tutor.js";
 import { startListeningSession, handleListeningAnswer, endListeningSession, getListeningSession } from "./listening.js";
 import { getUserVocabStats, getTotalVocabCount } from "./srs.js";
+import { getGrammarStats, getTotalGrammarCount } from "./grammar_srs.js";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
@@ -117,19 +118,22 @@ function registerHandlers() {
     const n3Pct = totals.n3_total > 0 ? Math.round((stats.n3_seen / totals.n3_total) * 100) : 0;
     const totalPct = totals.total > 0 ? Math.round((stats.total_seen / totals.total) * 100) : 0;
 
-    const message = `📊 *Your Vocabulary Progress*
+    const grammarStats = getGrammarStats(chatId);
+    const grammarTotals = getTotalGrammarCount();
+    const grammarPct = grammarTotals.total > 0
+      ? Math.round(((grammarStats?.total_seen || 0) / grammarTotals.total) * 100) : 0;
 
-🎯 Overall: ${stats.total_seen}/${totals.total} words (${totalPct}%)
+    const message = `📊 *Your Learning Progress*
 
-📘 N4: ${stats.n4_seen}/${totals.n4_total} (${n4Pct}%)
-📗 N3: ${stats.n3_seen}/${totals.n3_total} (${n3Pct}%)
+📚 *Vocabulary: ${stats.total_seen}/${totals.total} words (${totalPct}%)*
+  📘 N4: ${stats.n4_seen}/${totals.n4_total} (${n4Pct}%)
+  📗 N3: ${stats.n3_seen}/${totals.n3_total} (${n3Pct}%)
+  🌱 Learning: ${stats.learning || 0}  🔄 Reviewing: ${stats.reviewing || 0}  ⭐ Mastered: ${stats.mastered || 0}
 
-📈 Status breakdown:
-  🌱 Learning: ${stats.learning || 0} words
-  🔄 Reviewing: ${stats.reviewing || 0} words
-  ⭐ Mastered: ${stats.mastered || 0} words
+📝 *Grammar: ${grammarStats?.total_seen || 0}/${grammarTotals.total} patterns (${grammarPct}%)*
+  🌱 Learning: ${grammarStats?.learning || 0}  🔄 Reviewing: ${grammarStats?.reviewing || 0}  ⭐ Mastered: ${grammarStats?.mastered || 0}
 
-${stats.mastered > 0 ? "素晴らしい！Keep it up! 🎉" : "がんばって！Every session moves you forward! 💪"}`;
+${(stats.mastered || 0) + (grammarStats?.mastered || 0) > 0 ? "素晴らしい！Keep it up! 🎉" : "がんばって！Every session moves you forward! 💪"}`;
 
     await bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
   });
