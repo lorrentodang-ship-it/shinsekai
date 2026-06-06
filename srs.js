@@ -185,3 +185,55 @@ export function getTotalVocabCount() {
     FROM vocab_master
   `).get();
 }
+// ── Get N3-only words for dedicated N3 vocab section ─
+export function getN3Words(chatId, limit = 5) {
+  const today = new Date().toISOString();
+
+  // First try N3 words due for review
+  const dueN3 = db.prepare(`
+    SELECT uv.vocab_id, vm.word, vm.reading, vm.meaning, vm.level,
+           uv.confidence, uv.next_review
+    FROM user_vocab uv
+    JOIN vocab_master vm ON uv.vocab_id = vm.id
+    WHERE uv.chat_id = ?
+      AND vm.level = 'N3'
+      AND uv.status != 'mastered'
+      AND uv.next_review <= ?
+    ORDER BY uv.confidence ASC
+    LIMIT ?
+  `).all(chatId, today, limit);
+
+  if (dueN3.length >= limit) return dueN3;
+
+  // Fill remainder with unseen N3 words
+  const needed = limit - dueN3.length;
+  const newN3 = db.prepare(`
+    SELECT vm.*
+    FROM vocab_master vm
+    WHERE vm.id NOT IN (
+      SELECT vocab_id FROM user_vocab WHERE chat_id = ?
+    )
+    AND vm.level = 'N3'
+    ORDER BY vm.frequency_rank ASC
+    LIMIT ?
+  `).all(chatId, needed);
+
+  return [...dueN3, ...newN3];
+}
+
+// ── Introduce a word if not already tracked ───────────
+export function introduceWord(chatId, vocabId) {
+  const existing = db.prepare(
+    "SELECT id FROM user_vocab WHERE chat_id = ? AND vocab_id = ?"
+  ).get(chatId, vocabId);
+
+  if (existing) return;
+
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  db.prepare(`
+    INSERT INTO user_vocab (chat_id, vocab_id, status, confidence, next_review)
+    VALUES (?, ?, 'learning', 0, ?)
+  `).run(chatId, vocabId, tomorrow.toISOString());
+}
