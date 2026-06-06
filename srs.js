@@ -220,20 +220,3 @@ export function getN3Words(chatId, limit = 5) {
 
   return [...dueN3, ...newN3];
 }
-
-// ── Introduce a word if not already tracked ───────────
-export function introduceWord(chatId, vocabId) {
-  const existing = db.prepare(
-    "SELECT id FROM user_vocab WHERE chat_id = ? AND vocab_id = ?"
-  ).get(chatId, vocabId);
-
-  if (existing) return;
-
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  db.prepare(`
-    INSERT INTO user_vocab (chat_id, vocab_id, status, confidence, next_review)
-    VALUES (?, ?, 'learning', 0, ?)
-  `).run(chatId, vocabId, tomorrow.toISOString());
-}
