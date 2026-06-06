@@ -93,6 +93,33 @@ export function initDB() {
       UNIQUE(chat_id, vocab_id),
       FOREIGN KEY(vocab_id) REFERENCES vocab_master(id)
     );
+
+    CREATE TABLE IF NOT EXISTS grammar_master (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pattern TEXT NOT NULL,
+      romaji TEXT NOT NULL,
+      meaning TEXT NOT NULL,
+      category TEXT NOT NULL,
+      difficulty_rank INTEGER DEFAULT 1,
+      example_sentence TEXT DEFAULT '',
+      UNIQUE(pattern)
+    );
+
+    CREATE TABLE IF NOT EXISTS user_grammar (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      grammar_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'learning',
+      confidence INTEGER DEFAULT 0,
+      question_level INTEGER DEFAULT 1,
+      next_review DATETIME,
+      times_seen INTEGER DEFAULT 0,
+      times_correct INTEGER DEFAULT 0,
+      times_wrong INTEGER DEFAULT 0,
+      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(chat_id, grammar_id),
+      FOREIGN KEY(grammar_id) REFERENCES grammar_master(id)
+    );
   `);
 
   console.log("✅ Database initialized");
