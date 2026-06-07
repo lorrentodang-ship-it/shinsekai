@@ -3,7 +3,7 @@ import express from "express";
 import { askClaude, generateScheduledMessage } from "./claude.js";
 import { getUser, upsertUser, clearHistory, getVocabLog } from "./db.js";
 import { generateNewsDigest, triggerTutorSession } from "./scheduler.js";
-import { startTutorSession, handleSessionAnswer, skipSession } from "./tutor.js";
+import { startTutorSession, handleSessionAnswer, skipSession, startGrammarSession } from "./tutor.js";
 import { startListeningSession, handleListeningAnswer, endListeningSession, getListeningSession } from "./listening.js";
 import { getUserVocabStats, getTotalVocabCount } from "./srs.js";
 import { getGrammarStats, getTotalGrammarCount } from "./grammar_srs.js";
@@ -18,7 +18,8 @@ export let bot;
 const COMMANDS = [
   { command: "start", description: "Meet your Japanese tutor Hana" },
   { command: "news", description: "Get today's news digest right now" },
-  { command: "practice", description: "Start a vocab & grammar session now" },
+  { command: "practice", description: "Start vocab practice session (12 questions)" },
+  { command: "grammar", description: "Start N3 grammar session (8 questions)" },
   { command: "skipsession", description: "Skip the current practice session" },
   { command: "listening", description: "Start tonight's listening session now" },
   { command: "skiplatest", description: "Skip the current listening session" },
@@ -58,6 +59,13 @@ function registerHandlers() {
     const chatId = msg.chat.id.toString();
     upsertUser(chatId, { name: msg.from.first_name || "friend" });
     await startTutorSession(chatId, sendToChat);
+  });
+
+  // /grammar — grammar only session
+  bot.onText(/\/grammar/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    upsertUser(chatId, { name: msg.from.first_name || "friend" });
+    await startGrammarSession(chatId, sendToChat);
   });
 
   // /skipsession
