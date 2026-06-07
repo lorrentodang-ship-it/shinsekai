@@ -3,7 +3,7 @@ import {
   getUser, createSession, getActiveSession, updateSession,
   endSession, logAnswer
 } from "./db.js";
-import { getSessionVocab, buildVocabPromptSection, getN3OnlyVocab } from "./vocab_picker.js";
+import { getSessionVocab, buildVocabPromptSection } from "./vocab_picker.js";
 import { updateWordAfterReview, getN3Words, introduceWord } from "./srs.js";
 import {
   getTodaysGrammarSession, updateGrammarAfterReview,
@@ -12,120 +12,159 @@ import {
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// ── Generate all 20 questions (3 parallel Claude calls) ──
-async function generateQuestions(chatId) {
-  const user = getUser(chatId);
-  const level = user?.japanese_level || "N4";
+// ── Safe JSON parse with fallback ─────────────────────
+function safeParseQuestions(text, expectedCount, fallbackType = "vocab") {
+  try {
+    const raw = text.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error("Not an array");
+    // Sanitize each question — fill in missing fields with safe defaults
+    return parsed.map(q => ({
+      type: q.type || fallbackType,
+      question: q.question || "Question unavailable",
+      answer: q.answer || "",
+      hint: (q.hint && q.hint !== "undefined" && q.hint !== "null") ? q.hint : null,
+      vocab_word: q.vocab_word || null,
+      vocab_reading: q.vocab_reading || null,
+      vocab_meaning: q.vocab_meaning || null,
+      vocab_id: q.vocab_id || null,
+      grammar_id: q.grammar_id || null,
+      choices: q.choices || null,
+    }));
+  } catch (err) {
+    console.error(`Failed to parse questions (expected ${expectedCount}):`, err.message);
+    return null;
+  }
+}
 
-  // ── Vocab Part 1: SRS words (questions 1-7) ──────────
+// ── Generate Part 1: SRS vocab questions (1-7) ───────
+async function generateVocabQuestions(chatId, level) {
   const sessionVocab = getSessionVocab(chatId);
   const vocabSection = buildVocabPromptSection(sessionVocab);
 
-  const vocabPrompt = `You are Hana, a Japanese tutor. Generate 7 vocabulary questions for a JLPT ${level} student.
+  const prompt = `You are Hana, a Japanese tutor. Generate exactly 7 vocabulary questions for a JLPT ${level} student.
 
 ${vocabSection}
 
-Create exactly 7 questions using ONLY the words listed. Mix these types:
+Use ONLY the words listed above. Mix these question types:
 - Fill in the blank
 - Choose the correct particle
 - Translate a short phrase
 - Verb conjugation
 
-JSON array only — no markdown:
+Return a JSON array only — no markdown, no preamble:
 [
   {
     "type": "fill_blank",
-    "question": "question text",
+    "question": "question text in Japanese with English hint in brackets",
     "answer": "correct answer",
-    "hint": "REQUIRED: a short clue about the answer — never leave empty or undefined",
-    "vocab_word": "word",
-    "vocab_reading": "reading",
-    "vocab_meaning": "meaning",
+    "hint": "REQUIRED: short clue about the answer",
+    "vocab_word": "the word being tested",
+    "vocab_reading": "reading in hiragana",
+    "vocab_meaning": "English meaning",
     "vocab_id": 42,
     "grammar_id": null
   }
 ]
-Every question MUST have vocab_id (from word list) and grammar_id: null.`;
+RULES: Every field is required. hint must never be empty, null, or undefined. vocab_id must match the word list. grammar_id must be null.`;
 
-  // ── Vocab Part 2: N3-only vocab (questions 8-12) ─────
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-5",
+    max_tokens: 2000,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  return safeParseQuestions(response.content[0].text, 7, "vocab");
+}
+
+// ── Generate Part 2: N3 vocab questions (8-12) ───────
+async function generateN3VocabQuestions(chatId, level) {
   const n3Words = getN3Words(chatId, 5);
   for (const w of n3Words) {
     if (!w.vocab_id) introduceWord(chatId, w.id);
   }
 
-  const n3WordList = n3Words.length > 0
+  const wordList = n3Words.length > 0
     ? n3Words.map((w, i) =>
-        `${i + 1}. [id:${w.vocab_id || w.id}] ${w.word} (${w.reading}) = ${w.meaning} [N3]`
+        `${i + 1}. [id:${w.vocab_id || w.id}] ${w.word} (${w.reading}) = ${w.meaning}`
       ).join("\n")
-    : "No N3 words available yet — use common N3 vocabulary.";
+    : "No N3 words yet — use common N3 vocabulary like 決める、上昇、予報.";
 
-  const n3VocabPrompt = `Generate exactly 5 N3-focused vocabulary questions. Use ONLY these N3 words:
-${n3WordList}
+  const prompt = `Generate exactly 5 challenging N3 vocabulary questions for a ${level} student.
 
-Make questions more challenging:
+N3 words to use:
+${wordList}
+
+Make questions more challenging than Part 1:
 - Sentence construction using the word naturally
 - Choose the correct word for a nuanced sentence
 - Use the word in context with N3-level grammar
 
-JSON array only — same structure, vocab_id must match the [id:X] from the list, grammar_id: null.`;
+Return a JSON array only — no markdown:
+[
+  {
+    "type": "fill_blank",
+    "question": "question text",
+    "answer": "correct answer",
+    "hint": "REQUIRED: short clue — never empty",
+    "vocab_word": "word being tested",
+    "vocab_reading": "reading",
+    "vocab_meaning": "meaning",
+    "vocab_id": 123,
+    "grammar_id": null
+  }
+]
+RULES: hint is required on every question. vocab_id must match [id:X] from the list above. grammar_id must be null.`;
 
-  // ── Grammar: 8 questions (questions 13-20) ────────────
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-5",
+    max_tokens: 1500,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  return safeParseQuestions(response.content[0].text, 5, "vocab");
+}
+
+// ── Generate Part 3: N3 grammar questions (13-20) ────
+async function generateGrammarQuestions(chatId, level) {
   const grammarSession = getTodaysGrammarSession(chatId);
   const grammarSection = buildGrammarPromptSection(grammarSession);
 
-  const grammarPrompt = `Generate exactly 8 N3 grammar questions for a ${level} student.
+  const prompt = `Generate exactly 8 N3 grammar questions for a ${level} student.
 
 ${grammarSection}
 
 Question level guide:
-- Level 1 RECOGNITION: Multiple choice — pick the correct grammar pattern to complete the sentence
+- Level 1 RECOGNITION: Multiple choice — pick the correct grammar pattern
 - Level 2 PRODUCTION: Fill in blank — write the correct grammar form
-- Level 3 NUANCE: Write your own sentence OR explain the difference from a similar pattern
+- Level 3 NUANCE: Write own sentence OR explain difference from similar pattern
 
-JSON array only — no markdown:
+Return a JSON array only — no markdown:
 [
   {
     "type": "grammar",
-    "question": "question text",
+    "question": "question text with clear context",
     "answer": "correct answer",
-    "hint": "REQUIRED: short explanation of what grammar pattern is being tested — never leave empty",
-    "vocab_word": "grammar pattern eg 〜ために",
+    "hint": "REQUIRED: name the grammar pattern being tested, e.g. 〜ために",
+    "vocab_word": "grammar pattern e.g. 〜ために",
     "vocab_reading": "",
     "vocab_meaning": "meaning of the pattern",
     "vocab_id": null,
     "grammar_id": 5
   }
 ]
-grammar_id MUST match the grammar pattern's database id (use the number after 'id:' if shown, otherwise set null).
-vocab_id must be null for grammar questions.`;
+RULES: hint is required on every question — use the grammar pattern name as the hint. vocab_id must be null. grammar_id should match the pattern id if known.`;
 
-  // ── Fire all three in parallel ────────────────────────
-  const [vocabRes, n3VocabRes, grammarRes] = await Promise.all([
-    client.messages.create({
-      model: "claude-sonnet-4-5",
-      max_tokens: 2000,
-      messages: [{ role: "user", content: vocabPrompt }],
-    }),
-    client.messages.create({
-      model: "claude-sonnet-4-5",
-      max_tokens: 1500,
-      messages: [{ role: "user", content: n3VocabPrompt }],
-    }),
-    client.messages.create({
-      model: "claude-sonnet-4-5",
-      max_tokens: 2000,
-      messages: [{ role: "user", content: grammarPrompt }],
-    }),
-  ]);
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-5",
+    max_tokens: 2000,
+    messages: [{ role: "user", content: prompt }],
+  });
 
-  const vocabQs = JSON.parse(vocabRes.content[0].text.replace(/```json|```/g, "").trim());
-  const n3VocabQs = JSON.parse(n3VocabRes.content[0].text.replace(/```json|```/g, "").trim());
-  const grammarQs = JSON.parse(grammarRes.content[0].text.replace(/```json|```/g, "").trim());
-
-  return [...vocabQs, ...n3VocabQs, ...grammarQs];
+  return safeParseQuestions(response.content[0].text, 8, "grammar");
 }
 
-// ── Start a new session ───────────────────────────────
+// ── Start a new session (sequential generation) ───────
 export async function startTutorSession(chatId, sendFn) {
   const existing = getActiveSession(chatId);
   if (existing) {
@@ -135,42 +174,86 @@ export async function startTutorSession(chatId, sendFn) {
     return;
   }
 
-  await sendFn(chatId, "✏️ Generating your 20-question session — vocab + N3 grammar... just a moment!");
+  await sendFn(chatId, "✏️ Starting your session — generating questions...");
+
+  const user = getUser(chatId);
+  const level = user?.japanese_level || "N4";
 
   try {
-    const questions = await generateQuestions(chatId);
-    const sessionId = createSession(chatId, questions, questions.length);
+    // ── Part 1: Vocab (sequential, not parallel) ──────
+    await sendFn(chatId, "📚 *Part 1: Vocabulary Review* (Questions 1-7)");
+    await new Promise(r => setTimeout(r, 500));
 
-    // Section announcements
-    const sectionBreaks = {
-      0: "📚 *Part 1: Vocabulary Review* (Questions 1-7)",
-      7: "📗 *Part 2: N3 Vocabulary* (Questions 8-12)",
-      12: "📝 *Part 3: N3 Grammar* (Questions 13-20)",
-    };
-
-    if (sectionBreaks[0]) {
-      await sendFn(chatId, sectionBreaks[0]);
-      await new Promise(r => setTimeout(r, 800));
+    const vocabQs = await generateVocabQuestions(chatId, level);
+    if (!vocabQs || vocabQs.length === 0) {
+      await sendFn(chatId, "❌ Could not generate vocabulary questions. Try /practice again.");
+      return;
     }
 
-    await sendQuestion(chatId, sessionId, questions, 0, sendFn, sectionBreaks);
+    // Create session with just vocab questions first
+    const allQuestions = [...vocabQs];
+    const sessionId = createSession(chatId, allQuestions, 20); // reserve 20 total
+    await sendQuestion(chatId, sessionId, allQuestions, 0, sendFn);
 
   } catch (err) {
-    console.error("Session generation error:", err);
+    console.error("Session start error:", err);
     await sendFn(chatId, "申し訳ありません！Something went wrong. Try again with /practice 🙏");
   }
 }
 
+// ── Load next section into session ───────────────────
+async function loadNextSection(chatId, sessionId, currentQuestions, sendFn) {
+  const user = getUser(chatId);
+  const level = user?.japanese_level || "N4";
+  const count = currentQuestions.length;
+
+  try {
+    if (count === 7) {
+      // Load Part 2: N3 vocab
+      await sendFn(chatId, "📗 *Part 2: N3 Vocabulary* (Questions 8-12)\n\n_Generating questions..._");
+      const n3Qs = await generateN3VocabQuestions(chatId, level);
+      if (!n3Qs || n3Qs.length === 0) {
+        await sendFn(chatId, "⚠️ Could not load N3 vocabulary questions. Skipping to grammar...");
+        return loadNextSection(chatId, sessionId, [...currentQuestions, ...[]], sendFn);
+      }
+      const updated = [...currentQuestions, ...n3Qs];
+      updateSession(sessionId, { questions_json: JSON.stringify(updated) });
+      await new Promise(r => setTimeout(r, 500));
+      await sendQuestion(chatId, sessionId, updated, 7, sendFn);
+
+    } else if (count === 12) {
+      // Load Part 3: Grammar
+      await sendFn(chatId, "📝 *Part 3: N3 Grammar* (Questions 13-20)\n\n_Generating questions..._");
+      const grammarQs = await generateGrammarQuestions(chatId, level);
+      if (!grammarQs || grammarQs.length === 0) {
+        await sendFn(chatId, "⚠️ Could not load grammar questions. Session ending early.");
+        const fakeSession = { id: sessionId, total_questions: count, correct: 0, incorrect: 0 };
+        await finishSession(chatId, fakeSession, sendFn);
+        return;
+      }
+      const updated = [...currentQuestions, ...grammarQs];
+      updateSession(sessionId, { questions_json: JSON.stringify(updated) });
+      await new Promise(r => setTimeout(r, 500));
+      await sendQuestion(chatId, sessionId, updated, 12, sendFn);
+    }
+  } catch (err) {
+    console.error("Section load error:", err);
+    await sendFn(chatId, "⚠️ Could not load next section. Your progress so far has been saved.");
+  }
+}
+
 // ── Send a question ───────────────────────────────────
-async function sendQuestion(chatId, sessionId, questions, index, sendFn, sectionBreaks = {}) {
+async function sendQuestion(chatId, sessionId, questions, index, sendFn) {
   const q = questions[index];
-  const total = questions.length;
+  const total = 20; // always show out of 20
 
   let message = `📝 *Question (${index + 1}/${total})*\n\n${q.question}`;
+
   if (q.type === "multiple_choice" && q.choices) {
     message += "\n\n" + q.choices.map((c, i) => `${["A", "B", "C", "D"][i]}) ${c}`).join("\n");
   }
-  if (q.hint && q.hint !== "undefined") {
+
+  if (q.hint) {
     message += `\n\n💡 _Hint: ${q.hint}_`;
   }
 
@@ -219,7 +302,6 @@ Reply with JSON only:
 
   logAnswer(session.id, chatId, q.question, q.answer, userAnswer, wasCorrect);
 
-  // Route SRS update — vocab or grammar
   if (q.vocab_id) {
     updateWordAfterReview(chatId, q.vocab_id, wasCorrect);
   } else if (q.grammar_id) {
@@ -243,25 +325,27 @@ Reply with JSON only:
 
   await sendFn(chatId, feedback);
 
-  // Section break announcements
-  const sectionBreaks = {
-    7: "📗 *Part 2: N3 Vocabulary* (Questions 8-12)",
-    12: "📝 *Part 3: N3 Grammar* (Questions 13-20)",
-  };
-
   const nextIndex = currentIndex + 1;
-  if (nextIndex < questions.length) {
-    const announcement = sectionBreaks[nextIndex];
-    setTimeout(async () => {
-      if (announcement) {
-        await sendFn(chatId, announcement);
-        await new Promise(r => setTimeout(r, 800));
-      }
+
+  // Check if we need to load the next section
+  const sectionBoundaries = [7, 12];
+  const needsNextSection = sectionBoundaries.includes(nextIndex) &&
+    nextIndex >= questions.length;
+
+  setTimeout(async () => {
+    if (needsNextSection) {
+      // Load next section questions then continue
+      await loadNextSection(chatId, session.id, questions, sendFn);
+    } else if (nextIndex < questions.length) {
       await sendQuestion(chatId, session.id, questions, nextIndex, sendFn);
-    }, 1500);
-  } else {
-    setTimeout(() => finishSession(chatId, session, sendFn), 1500);
-  }
+    } else if (nextIndex < 20 && questions.length < 20) {
+      // Edge case: we're at end of loaded questions but not at 20 yet
+      await loadNextSection(chatId, session.id, questions, sendFn);
+    } else {
+      // All 20 done
+      finishSession(chatId, session, sendFn);
+    }
+  }, 1500);
 
   return true;
 }
