@@ -177,7 +177,8 @@ async function sendVocabQuestion(chatId, sessionId, questions, index, sendFn) {
   if (!q) return;
 
   const total = 12;
-  let message = `📝 *Question (${index + 1}/${total})*\n\n${q.question}`;
+  const safeQuestion = q.question.replace(/_/g, "\\_");
+  let message = `📝 *Question (${index + 1}/${total})*\n\n${safeQuestion}`;
 
   if (q.type === "multiple_choice" && q.choices) {
     message += "\n\n" + q.choices.map((c, i) => `${["A", "B", "C", "D"][i]}) ${c}`).join("\n");
@@ -341,7 +342,8 @@ async function sendGrammarQuestion(chatId, sessionId, questions, index, sendFn) 
   if (!q) return;
 
   const total = questions.length;
-  let message = `📝 *Grammar Question (${index + 1}/${total})*\n\n${q.question}`;
+  const safeQuestion = q.question.replace(/_/g, "\\_");
+  let message = `📝 *Grammar Question (${index + 1}/${total})*\n\n${safeQuestion}`;
 
   if (q.type === "multiple_choice" && q.choices) {
     message += "\n\n" + q.choices.map((c, i) => `${["A", "B", "C", "D"][i]}) ${c}`).join("\n");
