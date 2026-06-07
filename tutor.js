@@ -37,7 +37,7 @@ JSON array only — no markdown:
     "type": "fill_blank",
     "question": "question text",
     "answer": "correct answer",
-    "hint": "hint text",
+    "hint": "REQUIRED: a short clue about the answer — never leave empty or undefined",
     "vocab_word": "word",
     "vocab_reading": "reading",
     "vocab_meaning": "meaning",
@@ -88,7 +88,7 @@ JSON array only — no markdown:
     "type": "grammar",
     "question": "question text",
     "answer": "correct answer",
-    "hint": "the grammar pattern being tested",
+    "hint": "REQUIRED: short explanation of what grammar pattern is being tested — never leave empty",
     "vocab_word": "grammar pattern eg 〜ために",
     "vocab_reading": "",
     "vocab_meaning": "meaning of the pattern",
@@ -170,7 +170,9 @@ async function sendQuestion(chatId, sessionId, questions, index, sendFn, section
   if (q.type === "multiple_choice" && q.choices) {
     message += "\n\n" + q.choices.map((c, i) => `${["A", "B", "C", "D"][i]}) ${c}`).join("\n");
   }
-  message += `\n\n💡 _Hint: ${q.hint}_`;
+  if (q.hint && q.hint !== "undefined") {
+    message += `\n\n💡 _Hint: ${q.hint}_`;
+  }
 
   await sendFn(chatId, message);
   updateSession(sessionId, { current_question: index });
