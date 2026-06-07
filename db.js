@@ -187,10 +187,10 @@ export function getWeakVocab(chatId, limit = 5) {
 }
 
 // ── Tutor sessions ────────────────────────────────────
-export function createSession(chatId, questionsJson, totalQuestions = 8) {
+export function createSession(chatId, questionsJson, totalQuestions = 8, sessionType = "vocab") {
   const result = db.prepare(
-    `INSERT INTO tutor_sessions (chat_id, questions_json, total_questions) VALUES (?, ?, ?)`
-  ).run(chatId, JSON.stringify(questionsJson), totalQuestions);
+    `INSERT INTO tutor_sessions (chat_id, questions_json, total_questions, session_type) VALUES (?, ?, ?, ?)`
+  ).run(chatId, JSON.stringify(questionsJson), totalQuestions, sessionType);
   return result.lastInsertRowid;
 }
 
