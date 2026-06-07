@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { fetchTopHeadlines, formatHeadlinesForClaude } from "./news.js";
 import { sendToChat, bot } from "./bot.js";
 import { getUser, db } from "./db.js";
-import { startTutorSession } from "./tutor.js";
+import { startTutorSession, startGrammarSession } from "./tutor.js";
 import { startListeningSession } from "./listening.js";
 import { sendVoiceMessage } from "./tts.js";
 
@@ -134,6 +134,36 @@ async function triggerTutorSession() {
   }
 }
 
+// ── Afternoon grammar session ─────────────────────────
+async function triggerGrammarSession() {
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const recentGrammar = db.prepare(
+      `SELECT * FROM tutor_sessions 
+       WHERE chat_id = ? AND session_type = 'grammar' AND started_at >= ? 
+       ORDER BY started_at DESC LIMIT 1`
+    ).get(YOUR_CHAT_ID, todayStart.toISOString());
+
+    if (recentGrammar) {
+      console.log("⏭️ Skipping grammar trigger — already done today");
+      return;
+    }
+
+    const user = getUser(YOUR_CHAT_ID);
+    const name = user?.name || "friend";
+    await sendToChat(YOUR_CHAT_ID,
+      `${name}、文法の練習の時間です！📝 Ready for your N3 grammar session?`
+    );
+    await new Promise(r => setTimeout(r, 2000));
+    await startGrammarSession(YOUR_CHAT_ID, sendToChat);
+  } catch (err) {
+    console.error("❌ Grammar session error:", err);
+    await sendToChat(YOUR_CHAT_ID, "Sorry, couldn't start grammar session. Try /grammar manually! 🙏");
+  }
+}
+
 // ── Evening listening session ─────────────────────────
 async function triggerListeningSession() {
   console.log("🎧 9pm Vietnam — triggering listening session");
@@ -153,10 +183,16 @@ export function startScheduler() {
     await generateNewsDigest();
   }, { timezone: "Asia/Ho_Chi_Minh" });
 
-  // 3:00pm Vietnam time
+  // 3:00pm Vietnam time — vocab session
   cron.schedule("0 15 * * *", async () => {
-    console.log("⏰ 3pm Vietnam — starting tutoring session");
+    console.log("⏰ 3pm Vietnam — starting vocab session");
     await triggerTutorSession();
+  }, { timezone: "Asia/Ho_Chi_Minh" });
+
+  // 4:30pm Vietnam time — grammar session
+  cron.schedule("30 16 * * *", async () => {
+    console.log("⏰ 4:30pm Vietnam — starting grammar session");
+    await triggerGrammarSession();
   }, { timezone: "Asia/Ho_Chi_Minh" });
 
   // 9:00pm Vietnam time
@@ -171,4 +207,4 @@ export function startScheduler() {
   console.log("   🎧 Listening session at 9:00pm Vietnam time");
 }
 
-export { generateNewsDigest, triggerTutorSession, triggerListeningSession };
+export { generateNewsDigest, triggerTutorSession, triggerGrammarSession, triggerListeningSession };
