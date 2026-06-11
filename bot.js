@@ -214,9 +214,10 @@ ${(stats.mastered || 0) + (grammarStats?.mastered || 0) > 0 ? "素晴らしい�
       const handledBySession = await handleSessionAnswer(chatId, msg.text, sendToChat);
       if (handledBySession) return;
 
-      // Otherwise route to normal Claude chat
-      const reply = await askClaude(chatId, msg.text);
-      await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
+      // Free conversation temporarily disabled
+      await bot.sendMessage(chatId,
+        "🚧 Free chat is coming soon!\n\nFor now, use these commands:\n/practice — vocab session\n/grammar — grammar session\n/listening — listening practice\n/news — today's news digest\n/help — all commands"
+      );
 
     } catch (err) {
       console.error("Message handling error:", err);
