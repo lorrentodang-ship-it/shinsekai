@@ -120,6 +120,34 @@ export function initDB() {
       UNIQUE(chat_id, grammar_id),
       FOREIGN KEY(grammar_id) REFERENCES grammar_master(id)
     );
+
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      chat_id TEXT PRIMARY KEY,
+      news_topics TEXT DEFAULT '[]',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS news_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cache_date TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      story_index INTEGER NOT NULL,
+      headline_ja TEXT,
+      beginner_summary TEXT,
+      beginner_vocab TEXT,
+      beginner_audio TEXT,
+      intermediate_summary TEXT,
+      intermediate_vocab TEXT,
+      intermediate_audio TEXT,
+      advanced_summary TEXT,
+      advanced_vocab TEXT,
+      advanced_audio TEXT,
+      tts_beginner_file_id TEXT,
+      tts_intermediate_file_id TEXT,
+      tts_advanced_file_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(cache_date, topic, story_index)
+    );
   `);
 
   console.log("✅ Database initialized");
@@ -167,7 +195,6 @@ export function logVocab(chatId, word, reading, meaning) {
 }
 
 export function updateVocabConfidence(chatId, word, correct) {
-  // correct = true → confidence +1, wrong → confidence -1 (min 0)
   const existing = db.prepare("SELECT * FROM vocab_log WHERE chat_id = ? AND word = ?").get(chatId, word);
   if (existing) {
     const newConfidence = Math.max(0, existing.confidence + (correct ? 1 : -1));
@@ -179,7 +206,6 @@ export function getVocabLog(chatId, limit = 10) {
   return db.prepare("SELECT * FROM vocab_log WHERE chat_id = ? ORDER BY last_seen DESC LIMIT ?").all(chatId, limit);
 }
 
-// Words with low confidence = most need review
 export function getWeakVocab(chatId, limit = 5) {
   return db.prepare(
     "SELECT * FROM vocab_log WHERE chat_id = ? ORDER BY confidence ASC, last_seen ASC LIMIT ?"
@@ -222,4 +248,69 @@ export function getSessionStats(chatId, limit = 7) {
      FROM tutor_sessions WHERE chat_id = ? AND state = 'complete' 
      ORDER BY started_at DESC LIMIT ?`
   ).all(chatId, limit);
+}
+
+// ── User preferences (news topics) ───────────────────
+export function getUserPreferences(chatId) {
+  const row = db.prepare("SELECT * FROM user_preferences WHERE chat_id = ?").get(chatId);
+  if (!row) return { chat_id: chatId, news_topics: [] };
+  return { ...row, news_topics: JSON.parse(row.news_topics || "[]") };
+}
+
+export function setUserNewsTopics(chatId, topics) {
+  const existing = db.prepare("SELECT chat_id FROM user_preferences WHERE chat_id = ?").get(chatId);
+  if (existing) {
+    db.prepare("UPDATE user_preferences SET news_topics = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?")
+      .run(JSON.stringify(topics), chatId);
+  } else {
+    db.prepare("INSERT INTO user_preferences (chat_id, news_topics) VALUES (?, ?)")
+      .run(chatId, JSON.stringify(topics));
+  }
+}
+
+export function getActiveNewsTopics() {
+  const rows = db.prepare("SELECT news_topics FROM user_preferences WHERE news_topics != '[]'").all();
+  const allTopics = new Set();
+  for (const row of rows) {
+    const topics = JSON.parse(row.news_topics || "[]");
+    topics.forEach(t => allTopics.add(t));
+  }
+  return [...allTopics];
+}
+
+// ── News cache ────────────────────────────────────────
+export function getCachedStory(cacheDate, topic, storyIndex) {
+  return db.prepare(
+    "SELECT * FROM news_cache WHERE cache_date = ? AND topic = ? AND story_index = ?"
+  ).get(cacheDate, topic, storyIndex);
+}
+
+export function saveStoryToCache(cacheDate, topic, storyIndex, data) {
+  db.prepare(`
+    INSERT OR REPLACE INTO news_cache
+    (cache_date, topic, story_index, headline_ja,
+     beginner_summary, beginner_vocab, beginner_audio,
+     intermediate_summary, intermediate_vocab, intermediate_audio,
+     advanced_summary, advanced_vocab, advanced_audio)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    cacheDate, topic, storyIndex, data.headline_ja,
+    data.beginner_summary, JSON.stringify(data.beginner_vocab), data.beginner_audio,
+    data.intermediate_summary, JSON.stringify(data.intermediate_vocab), data.intermediate_audio,
+    data.advanced_summary, JSON.stringify(data.advanced_vocab), data.advanced_audio
+  );
+}
+
+export function updateTTSFileId(cacheDate, topic, storyIndex, level, fileId) {
+  const col = `tts_${level}_file_id`;
+  db.prepare(`UPDATE news_cache SET ${col} = ? WHERE cache_date = ? AND topic = ? AND story_index = ?`)
+    .run(fileId, cacheDate, topic, storyIndex);
+}
+
+export function getCachedStoriesForUser(cacheDate, topicKeys) {
+  if (!topicKeys.length) return [];
+  const placeholders = topicKeys.map(() => "?").join(",");
+  return db.prepare(
+    `SELECT * FROM news_cache WHERE cache_date = ? AND topic IN (${placeholders}) ORDER BY topic, story_index`
+  ).all(cacheDate, ...topicKeys);
 }
