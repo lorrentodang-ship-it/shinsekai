@@ -2,7 +2,9 @@ import TelegramBot from "node-telegram-bot-api";
 import express from "express";
 import { askClaude, generateScheduledMessage } from "./claude.js";
 import { getUser, upsertUser, clearHistory, getVocabLog } from "./db.js";
-import { generateNewsDigest, triggerTutorSession } from "./scheduler.js";
+import { generateNewsDigest } from "./scheduler.js";
+import { getUserPreferences, setUserNewsTopics } from "./db.js";
+import { TOPIC_FEEDS, TOPIC_KEYS } from "./news.js";
 import { startTutorSession, handleSessionAnswer, skipSession, startGrammarSession } from "./tutor.js";
 import { startListeningSession, handleListeningAnswer, endListeningSession, getListeningSession } from "./listening.js";
 import { getUserVocabStats, getTotalVocabCount } from "./srs.js";
@@ -15,9 +17,42 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
 
 export let bot;
 
+// Track topic selection state per user
+const topicSelectionState = new Map(); // chatId → Set of selected topics
+
+function buildTopicKeyboard(selectedTopics) {
+  const selected = new Set(selectedTopics);
+  const rows = [];
+  const keys = TOPIC_KEYS;
+
+  // 2 buttons per row
+  for (let i = 0; i < keys.length; i += 2) {
+    const row = [];
+    for (let j = i; j < Math.min(i + 2, keys.length); j++) {
+      const key = keys[j];
+      const feed = TOPIC_FEEDS[key];
+      const isSelected = selected.has(key);
+      row.push({
+        text: `${isSelected ? "✅ " : ""}${feed.emoji} ${feed.name}`,
+        callback_data: `topic_toggle_${key}`,
+      });
+    }
+    rows.push(row);
+  }
+
+  // Done button
+  rows.push([{
+    text: `✅ Done (${selected.size}/3 selected)`,
+    callback_data: "topic_done",
+  }]);
+
+  return { inline_keyboard: rows };
+}
+
 const COMMANDS = [
   { command: "start", description: "Meet your Japanese tutor Hana" },
   { command: "news", description: "Get today's news digest right now" },
+  { command: "topics", description: "Choose your news topics (up to 3)" },
   { command: "practice", description: "Start vocab practice session (12 questions)" },
   { command: "grammar", description: "Start N3 grammar session (8 questions)" },
   { command: "skipsession", description: "Skip the current practice session" },
@@ -30,6 +65,22 @@ const COMMANDS = [
   { command: "reset", description: "Clear conversation history and start fresh" },
   { command: "help", description: "Show all commands" },
 ];
+
+async function showTopicSelector(chatId, botInstance) {
+  const prefs = getUserPreferences(chatId);
+  const current = prefs.news_topics || [];
+  topicSelectionState.set(chatId, new Set(current));
+
+  await botInstance.sendMessage(chatId,
+    "📰 *Choose up to 3 news topics*
+
+Tap to select/deselect, then tap ✅ Done when finished:",
+    {
+      parse_mode: "Markdown",
+      reply_markup: buildTopicKeyboard(current),
+    }
+  );
+}
 
 function registerHandlers() {
   // /start
@@ -50,8 +101,81 @@ function registerHandlers() {
   // /news
   bot.onText(/\/news/, async (msg) => {
     const chatId = msg.chat.id.toString();
-    await bot.sendMessage(chatId, "📰 Fetching your news digest... give me a moment!");
-    await generateNewsDigest();
+    const prefs = getUserPreferences(chatId);
+    if (!prefs.news_topics || prefs.news_topics.length === 0) {
+      // No topics set — redirect to topic selection
+      await showTopicSelector(chatId, bot);
+    } else {
+      await bot.sendMessage(chatId, "📰 Fetching your news digest... give me a moment!");
+      await generateNewsDigest(chatId);
+    }
+  });
+
+  // /topics — topic selection
+  bot.onText(/\/topics/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    await showTopicSelector(chatId, bot);
+  });
+
+  // Handle inline keyboard callbacks
+  bot.on("callback_query", async (query) => {
+    const chatId = query.message.chat.id.toString();
+    const data = query.data;
+
+    if (data.startsWith("topic_toggle_")) {
+      const topicKey = data.replace("topic_toggle_", "");
+      const current = topicSelectionState.get(chatId) || new Set();
+
+      if (current.has(topicKey)) {
+        current.delete(topicKey);
+      } else if (current.size < 3) {
+        current.add(topicKey);
+      } else {
+        await bot.answerCallbackQuery(query.id, {
+          text: "You can only select up to 3 topics! Deselect one first.",
+          show_alert: false,
+        });
+        return;
+      }
+
+      topicSelectionState.set(chatId, current);
+
+      // Update the message with new keyboard
+      try {
+        await bot.editMessageReplyMarkup(
+          buildTopicKeyboard([...current]),
+          { chat_id: chatId, message_id: query.message.message_id }
+        );
+      } catch (e) { /* ignore if message unchanged */ }
+      await bot.answerCallbackQuery(query.id);
+
+    } else if (data === "topic_done") {
+      const selected = [...(topicSelectionState.get(chatId) || new Set())];
+      topicSelectionState.delete(chatId);
+
+      if (selected.length === 0) {
+        await bot.answerCallbackQuery(query.id, {
+          text: "Please select at least 1 topic!",
+          show_alert: true,
+        });
+        return;
+      }
+
+      // Save preferences
+      setUserNewsTopics(chatId, selected);
+      await bot.answerCallbackQuery(query.id);
+
+      const topicNames = selected.map(k => `${TOPIC_FEEDS[k].emoji} ${TOPIC_FEEDS[k].name}`).join(", ");
+      await bot.editMessageText(
+        `✅ *News preferences saved!*
+
+Your topics: ${topicNames}
+
+Your personalised digest arrives every morning at 7am 🌅
+Use /topics anytime to update your preferences.`,
+        { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
+      );
+    }
   });
 
   // /practice — manual session trigger
