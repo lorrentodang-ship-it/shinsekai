@@ -68,3 +68,26 @@ export function formatArticlesForClaude(articles) {
     `${i + 1}. [${a.source}] ${a.title}${a.summary ? ": " + a.summary : ""}`
   ).join("\n");
 }
+// Backward compatibility for listening.js
+export async function fetchTopHeadlines() {
+  const allKeys = Object.keys(TOPIC_FEEDS);
+  const articles = await fetchActiveTopics(allKeys);
+  const grouped = {};
+  for (const article of articles) {
+    if (!grouped[article.topic]) grouped[article.topic] = [];
+    grouped[article.topic].push(article);
+  }
+  return grouped;
+}
+
+// Backward compatibility for listening.js
+export function formatHeadlinesForClaude(grouped) {
+  const sections = [];
+  for (const [topic, articles] of Object.entries(grouped)) {
+    if (!articles.length) continue;
+    const feed = TOPIC_FEEDS[topic];
+    const lines = articles.map(a => `- ${a.title}${a.summary ? ": " + a.summary : ""} [${a.source}]`);
+    sections.push(`## ${feed?.name || topic}\n${lines.join("\n")}`);
+  }
+  return sections.join("\n\n");
+}
