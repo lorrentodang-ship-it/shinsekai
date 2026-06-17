@@ -1,161 +1,185 @@
 import cron from "node-cron";
-import Anthropic from "@anthropic-ai/sdk";
-import { fetchTopHeadlines, formatHeadlinesForClaude } from "./news.js";
 import { sendToChat, bot } from "./bot.js";
-import { getUser, db } from "./db.js";
+import { getUser, db, getActiveNewsTopics, getCachedStoriesForUser, getUserPreferences } from "./db.js";
 import { startTutorSession, startGrammarSession } from "./tutor.js";
 import { startListeningSession } from "./listening.js";
-import { sendVoiceMessage } from "./tts.js";
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+import { fetchActiveTopics } from "./news.js";
+import { generateGradedStory, ensureTTSCached, levelToNewsTier } from "./news_generator.js";
+import { TOPIC_FEEDS } from "./news.js";
 
 const YOUR_CHAT_ID = process.env.MY_CHAT_ID || "985242254";
 
-// ── Morning news digest ───────────────────────────────
-async function generateNewsDigest() {
-  console.log("📰 Fetching news for morning digest...");
-  try {
-    const grouped = await fetchTopHeadlines();
-    const headlinesText = formatHeadlinesForClaude(grouped);
-
-    if (!headlinesText) {
-      await sendToChat(YOUR_CHAT_ID, "おはようございます！ニュースの取得に失敗しました。また後で試してみます。");
-      return;
-    }
-
-    const user = getUser(YOUR_CHAT_ID);
-    const level = user?.japanese_level || "beginner";
-    const today = new Date().toLocaleDateString("en-US", {
-      weekday: "long", year: "numeric", month: "long", day: "numeric",
-      timeZone: "Asia/Ho_Chi_Minh"
-    });
-
-    const prompt = `You are Hana, a Japanese tutor. It's 7am in Vietnam on ${today} and you're sending your student their morning news briefing.
-
-Here are today's top headlines:
-
-${headlinesText}
-
-Create a morning news digest. Respond in JSON only — no markdown, no preamble:
-{
-  "greeting": "warm おはようございます opening line with today's energy (1-2 sentences)",
-  "stories": [
-    {
-      "headline_ja": "headline translated naturally into Japanese",
-      "summary_ja": "1-2 sentence explanation in Japanese",
-      "vocab": [
-        {"word": "単語", "reading": "たんご", "meaning": "vocabulary word"}
-      ],
-      "audio_text": "the headline and summary combined as natural spoken Japanese — NO vocab lists, just the story text, written to sound natural when read aloud"
-    }
-  ],
-  "closing": "short encouraging closing line mixing Japanese and English, referencing today's weather or energy"
+// ── Get today's cache date string ─────────────────────
+function todayStr() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }); // YYYY-MM-DD
 }
 
-Include 4-5 stories covering Vietnam, Asia, global international affairs, and science.
-Student's Japanese level: ${level}
-Keep Japanese complexity appropriate for their level.
-Pick 2-3 vocab words per story.
-Keep audio_text clean — no bullet points, no emoji, just natural spoken sentences.`;
+// ── Morning news generation (runs at 6:45am — before delivery) ──
+export async function generateDailyNews() {
+  console.log("📰 Generating daily news cache...");
+  const cacheDate = todayStr();
 
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-5",
-      max_tokens: 2000,
-      messages: [{ role: "user", content: prompt }],
-    });
+  // Step 1: which topics are selected by any user?
+  const activeTopics = getActiveNewsTopics();
+  if (activeTopics.length === 0) {
+    console.log("ℹ️  No users have selected topics yet — skipping news generation");
+    return;
+  }
+  console.log(`📋 Active topics: ${activeTopics.join(", ")}`);
 
-    const raw = response.content[0].text.replace(/```json|```/g, "").trim();
-    const digest = JSON.parse(raw);
+  // Step 2: fetch RSS for active topics only
+  const articles = await fetchActiveTopics(activeTopics);
+  console.log(`📄 Fetched ${articles.length} articles`);
 
-    // Send greeting
-    await sendToChat(YOUR_CHAT_ID, digest.greeting);
-    await new Promise(r => setTimeout(r, 1000));
+  // Step 3: generate graded versions for each article
+  for (let i = 0; i < articles.length; i++) {
+    const article = { ...articles[i], storyIndex: i };
+    try {
+      await generateGradedStory(article, cacheDate);
+      console.log(`  ✅ Generated: [${article.topic}] ${article.title.slice(0, 50)}`);
+    } catch (err) {
+      console.error(`  ❌ Failed: [${article.topic}]`, err.message);
+    }
+  }
+  console.log("✅ Daily news cache ready!");
+}
 
-    // Send each story: text first, then audio
-    for (let i = 0; i < digest.stories.length; i++) {
-      const story = digest.stories[i];
+// ── Deliver news to a single user ────────────────────
+async function deliverNewsToUser(chatId) {
+  const user = getUser(chatId);
+  const prefs = getUserPreferences(chatId);
+  const userTopics = prefs.news_topics || [];
 
-      // Build text message with vocab (for reading)
-      const vocabLines = story.vocab
-        .map(v => `📚 ${v.word} (${v.reading}) = ${v.meaning}`)
-        .join("\n");
+  if (userTopics.length === 0) {
+    await sendToChat(chatId,
+      "おはようございます！📰\n\nYou haven't selected your news topics yet!\nUse /topics to pick up to 3 topics and I'll send you personalised news every morning."
+    );
+    return;
+  }
 
-      const textMessage = `*${story.headline_ja}*\n\n${story.summary_ja}\n\n${vocabLines}`;
-      await sendToChat(YOUR_CHAT_ID, textMessage);
+  const tier = levelToNewsTier(user?.japanese_level);
+  const cacheDate = todayStr();
+  const stories = getCachedStoriesForUser(cacheDate, userTopics);
+
+  if (stories.length === 0) {
+    await sendToChat(chatId, "おはようございます！今日のニュースの準備ができていません。少し後でもう一度お試しください。🙏");
+    return;
+  }
+
+  // Greeting
+  const today = new Date().toLocaleDateString("en-US", {
+    weekday: "long", month: "long", day: "numeric", timeZone: "Asia/Ho_Chi_Minh"
+  });
+  await sendToChat(chatId, `おはようございます！🌅 *${today}*\n\nHere are your personalised news stories:`);
+  await new Promise(r => setTimeout(r, 800));
+
+  // Send up to 3 stories
+  const toSend = stories.slice(0, 3);
+  for (const story of toSend) {
+    try {
+      const topicInfo = TOPIC_FEEDS[story.topic];
+      const emoji = topicInfo?.emoji || "📰";
+      const summaryKey  = `${tier}_summary`;
+      const vocabKey    = `${tier}_vocab`;
+
+      const summary = story[summaryKey];
+      const vocabRaw = story[vocabKey];
+      const vocab = typeof vocabRaw === "string" ? JSON.parse(vocabRaw) : vocabRaw;
+      const vocabLines = (vocab || []).map(v => `📚 ${v.word} (${v.reading}) = ${v.meaning}`).join("\n");
+
+      // Escape underscores to prevent Telegram Markdown errors
+      const safeHeadline = story.headline_ja.replace(/_/g, "\\_");
+      const safeSummary  = summary.replace(/_/g, "\\_");
+
+      const textMsg = `${emoji} *${safeHeadline}*\n\n${safeSummary}\n\n${vocabLines}`;
+      await sendToChat(chatId, textMsg);
       await new Promise(r => setTimeout(r, 500));
 
-      // Send audio — clean story text only, no vocab
-      await sendVoiceMessage(bot, YOUR_CHAT_ID, story.audio_text, `news_story_${i}`);
-      await new Promise(r => setTimeout(r, 1500));
+      // Send TTS audio (cached)
+      try {
+        const fileId = await ensureTTSCached(bot, chatId, story, tier);
+        if (fileId) {
+          await bot.sendVoice(chatId, fileId);
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      } catch (ttsErr) {
+        console.warn("TTS send failed:", ttsErr.message);
+      }
+    } catch (storyErr) {
+      console.error("Story delivery error:", storyErr.message);
     }
+  }
 
-    // Send closing
-    await sendToChat(YOUR_CHAT_ID, digest.closing);
-    console.log("✅ Morning news digest sent!");
+  // Closing
+  const topicNames = userTopics.map(t => TOPIC_FEEDS[t]?.name || t).join(", ");
+  await sendToChat(chatId, `_Topics: ${topicNames} | Level: ${tier} | Use /topics to update preferences_`);
+}
 
-  } catch (err) {
-    console.error("❌ News digest error:", err);
-    await sendToChat(YOUR_CHAT_ID, "おはようございます！今朝はニュースの取得に問題がありました。ごめんなさい！");
+// ── Morning news digest (deliver to all users) ────────
+async function triggerMorningNews() {
+  console.log("⏰ 7am — delivering news to all users");
+  const users = db.prepare("SELECT chat_id FROM users").all();
+  for (const user of users) {
+    try {
+      await deliverNewsToUser(user.chat_id);
+      await new Promise(r => setTimeout(r, 500)); // slight delay between users
+    } catch (err) {
+      console.error(`❌ News delivery failed for ${user.chat_id}:`, err.message);
+    }
   }
 }
 
-// ── Afternoon tutoring session ────────────────────────
+// ── Manual news trigger (for /news command) ───────────
+export async function generateNewsDigest(chatIdOverride) {
+  const chatId = chatIdOverride || YOUR_CHAT_ID;
+  // Generate cache first if not already done today
+  await generateDailyNews();
+  await deliverNewsToUser(chatId);
+}
+
+// ── Afternoon vocab session ───────────────────────────
 async function triggerTutorSession() {
-  console.log("✏️ 3pm Vietnam — triggering tutoring session");
+  console.log("✏️ 3pm — triggering vocab session");
   try {
-    // Skip if user already did a session today
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-
     const recentSession = db.prepare(
-      `SELECT * FROM tutor_sessions 
-       WHERE chat_id = ? AND started_at >= ? 
-       ORDER BY started_at DESC LIMIT 1`
+      `SELECT * FROM tutor_sessions WHERE chat_id = ? AND session_type = 'vocab' AND started_at >= ? ORDER BY started_at DESC LIMIT 1`
     ).get(YOUR_CHAT_ID, todayStart.toISOString());
 
     if (recentSession) {
-      console.log("⏭️ Skipping 3pm trigger — session already done today");
+      console.log("⏭️ Skipping 3pm — vocab session already done today");
       return;
     }
 
     const user = getUser(YOUR_CHAT_ID);
     const name = user?.name || "friend";
-
-    await sendToChat(YOUR_CHAT_ID,
-      `こんにちは、${name}！🌸 Time for your afternoon Japanese practice!\n\nReady for today's vocab & grammar session? Let's go! 💪`
-    );
-
+    await sendToChat(YOUR_CHAT_ID, `こんにちは、${name}！🌸 Time for your afternoon vocab practice! 💪`);
     await new Promise(r => setTimeout(r, 2000));
     await startTutorSession(YOUR_CHAT_ID, sendToChat);
-
   } catch (err) {
     console.error("❌ Tutor session error:", err);
-    await sendToChat(YOUR_CHAT_ID, "Sorry, I couldn't start your practice session. Try /practice manually! 🙏");
+    await sendToChat(YOUR_CHAT_ID, "Sorry, couldn't start vocab session. Try /practice manually! 🙏");
   }
 }
 
-// ── Afternoon grammar session ─────────────────────────
+// ── Grammar session ───────────────────────────────────
 async function triggerGrammarSession() {
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-
     const recentGrammar = db.prepare(
-      `SELECT * FROM tutor_sessions 
-       WHERE chat_id = ? AND session_type = 'grammar' AND started_at >= ? 
-       ORDER BY started_at DESC LIMIT 1`
+      `SELECT * FROM tutor_sessions WHERE chat_id = ? AND session_type = 'grammar' AND started_at >= ? ORDER BY started_at DESC LIMIT 1`
     ).get(YOUR_CHAT_ID, todayStart.toISOString());
 
     if (recentGrammar) {
-      console.log("⏭️ Skipping grammar trigger — already done today");
+      console.log("⏭️ Skipping grammar — already done today");
       return;
     }
 
     const user = getUser(YOUR_CHAT_ID);
     const name = user?.name || "friend";
-    await sendToChat(YOUR_CHAT_ID,
-      `${name}、文法の練習の時間です！📝 Ready for your N3 grammar session?`
-    );
+    await sendToChat(YOUR_CHAT_ID, `${name}、文法の練習の時間です！📝 Ready for your N3 grammar session?`);
     await new Promise(r => setTimeout(r, 2000));
     await startGrammarSession(YOUR_CHAT_ID, sendToChat);
   } catch (err) {
@@ -164,47 +188,51 @@ async function triggerGrammarSession() {
   }
 }
 
-// ── Evening listening session ─────────────────────────
+// ── Listening session ─────────────────────────────────
 async function triggerListeningSession() {
-  console.log("🎧 9pm Vietnam — triggering listening session");
+  console.log("🎧 9pm — triggering listening session");
   try {
     await startListeningSession(YOUR_CHAT_ID, bot);
   } catch (err) {
     console.error("❌ Listening session error:", err);
-    await sendToChat(YOUR_CHAT_ID, "申し訳ありません！リスニングセッションを開始できませんでした。/listening で試してください！🙏");
+    await sendToChat(YOUR_CHAT_ID, "申し訳ありません！/listening で試してください！🙏");
   }
 }
 
 // ── Scheduler ─────────────────────────────────────────
 export function startScheduler() {
-  // 7:00am Vietnam time
-  cron.schedule("0 7 * * *", async () => {
-    console.log("⏰ 7am Vietnam — sending morning news digest");
-    await generateNewsDigest();
+  // 6:45am — pre-generate news cache before delivery
+  cron.schedule("45 6 * * *", async () => {
+    console.log("⏰ 6:45am — pre-generating news cache");
+    await generateDailyNews();
   }, { timezone: "Asia/Ho_Chi_Minh" });
 
-  // 3:00pm Vietnam time — vocab session
+  // 7:00am — deliver to all users
+  cron.schedule("0 7 * * *", async () => {
+    console.log("⏰ 7am — delivering morning news");
+    await triggerMorningNews();
+  }, { timezone: "Asia/Ho_Chi_Minh" });
+
+  // 3:00pm — vocab session
   cron.schedule("0 15 * * *", async () => {
-    console.log("⏰ 3pm Vietnam — starting vocab session");
     await triggerTutorSession();
   }, { timezone: "Asia/Ho_Chi_Minh" });
 
-  // 4:30pm Vietnam time — grammar session
+  // 4:30pm — grammar session
   cron.schedule("30 16 * * *", async () => {
-    console.log("⏰ 4:30pm Vietnam — starting grammar session");
     await triggerGrammarSession();
   }, { timezone: "Asia/Ho_Chi_Minh" });
 
-  // 9:00pm Vietnam time
+  // 9:00pm — listening session
   cron.schedule("0 21 * * *", async () => {
-    console.log("⏰ 9pm Vietnam — starting listening session");
     await triggerListeningSession();
   }, { timezone: "Asia/Ho_Chi_Minh" });
 
   console.log("✅ Scheduler started:");
-  console.log("   📰 News digest at 7:00am Vietnam time");
-  console.log("   ✏️  Tutoring session at 3:00pm Vietnam time");
-  console.log("   🎧 Listening session at 9:00pm Vietnam time");
+  console.log("   📰 News cache at 6:45am, delivery at 7:00am");
+  console.log("   ✏️  Vocab session at 3:00pm");
+  console.log("   📝 Grammar session at 4:30pm");
+  console.log("   🎧 Listening session at 9:00pm");
 }
 
-export { generateNewsDigest, triggerTutorSession, triggerGrammarSession, triggerListeningSession };
+export { triggerTutorSession, triggerGrammarSession, triggerListeningSession };
