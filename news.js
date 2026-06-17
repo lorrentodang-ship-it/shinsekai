@@ -5,83 +5,66 @@ const parser = new Parser({
   headers: { "User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)" },
 });
 
-// RSS feeds covering Vietnam, Asia, global/international affairs, and science news
-const FEEDS = [
-  // Vietnam
-  {
-    name: "VnExpress News",
-    url: "https://vnexpress.net/rss/thoi-su.rss",
-    region: "Vietnam",
-  },
-  // Asia
-  {
-    name: "SCMP - Asia",
-    url: "https://www.scmp.com/rss/5/feed",
-    region: "Asia",
-  },
-  // Science
-  {
-    name: "Wired Science",
-    url: "https://www.wired.com/feed/category/science/latest/rss",
-    region: "Science",
-  },
-  // Global / International Politics
-  {
-    name: "Financial Times World",
-    url: "https://www.ft.com/rss/home/international",
-    region: "Global",
-  },
-];
+// ── 17 topic feeds ────────────────────────────────────
+export const TOPIC_FEEDS = {
+  vietnam:      { name: "Vietnam",            emoji: "🇻🇳", url: "https://e.vnexpress.net/rss/news.rss" },
+  japan:        { name: "Japan & Culture",    emoji: "🇯🇵", url: "https://www.japantimes.co.jp/feed/" },
+  us:           { name: "United States",      emoji: "🇺🇸", url: "https://www.pbs.org/newshour/feeds/rss/feeds/headlines" },
+  europe:       { name: "Europe",             emoji: "🇪🇺", url: "https://feeds.bbci.co.uk/news/world/europe/rss.xml" },
+  china:        { name: "China",              emoji: "🇨🇳", url: "https://www.chinadaily.com.cn/rss/china_rss.xml" },
+  india:        { name: "India",              emoji: "🇮🇳", url: "https://timesofindia.indiatimes.com/rssfeedstopstories.cms" },
+  korea:        { name: "South Korea",        emoji: "🇰🇷", url: "https://www.koreaherald.com/rss/360000000000.xml" },
+  middleeast:   { name: "Middle East",        emoji: "🕌", url: "https://www.aljazeera.com/xml/rss/all.xml" },
+  russia:       { name: "Russia",             emoji: "🇷🇺", url: "https://www.themoscowtimes.com/rss/news" },
+  australia:    { name: "Australia & NZ",     emoji: "🇦🇺", url: "https://www.abc.net.au/news/feed/2942460/rss.xml" },
+  tech:         { name: "Tech & Science",     emoji: "🤖", url: "https://www.wired.com/feed/rss" },
+  health:       { name: "Food & Health",      emoji: "🏥", url: "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml" },
+  sports:       { name: "Sports",             emoji: "⚽", url: "https://www.skysports.com/rss/12040" },
+  fashion:      { name: "Fashion",            emoji: "👗", url: "https://rss.nytimes.com/services/xml/rss/nyt/FashionandStyle.xml" },
+  arts:         { name: "Arts",               emoji: "🎨", url: "https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml" },
+  entertainment:{ name: "Entertainment",      emoji: "🎬", url: "https://nypost.com/entertainment/feed" },
+  lifestyle:    { name: "Lifestyle",          emoji: "✨", url: "https://nypost.com/lifestyle/feed" },
+};
 
-// Fetch headlines from a single feed, return top N items
-async function fetchFeed(feed, limit = 3) {
+// Topic keys in display order for the inline keyboard
+export const TOPIC_KEYS = Object.keys(TOPIC_FEEDS);
+
+// ── Fetch a single feed ───────────────────────────────
+async function fetchFeed(topicKey, limit = 2) {
+  const feed = TOPIC_FEEDS[topicKey];
+  if (!feed) return [];
   try {
     const parsed = await parser.parseURL(feed.url);
-    return parsed.items.slice(0, limit).map((item) => ({
-      title: item.title?.trim() || "No title",
-      summary: item.contentSnippet?.slice(0, 200) || item.content?.slice(0, 200) || "",
-      link: item.link || "",
-      source: feed.name,
-      region: feed.region,
+    return parsed.items.slice(0, limit).map(item => ({
+      title:   item.title?.trim() || "No title",
+      summary: item.contentSnippet?.slice(0, 300) || item.content?.slice(0, 300) || "",
+      link:    item.link || "",
+      source:  feed.name,
+      topic:   topicKey,
     }));
   } catch (err) {
     console.warn(`⚠️ Failed to fetch ${feed.name}:`, err.message);
-    return []; // silently skip failed feeds
+    return [];
   }
 }
 
-// Fetch from all feeds, return grouped headlines
-export async function fetchTopHeadlines() {
+// ── Fetch only the topics that are active (selected by users) ──
+export async function fetchActiveTopics(activeTopicKeys) {
+  if (!activeTopicKeys || activeTopicKeys.length === 0) return [];
+
   const results = await Promise.allSettled(
-    FEEDS.map((feed) => fetchFeed(feed, 2))
+    activeTopicKeys.map(key => fetchFeed(key, 2))
   );
 
-  const allArticles = results
-    .filter((r) => r.status === "fulfilled")
-    .flatMap((r) => r.value)
-    .filter((a) => a.title);
-
-  // Group by region
-  const grouped = {
-    Vietnam: allArticles.filter((a) => a.region === "Vietnam"),
-    "Southeast Asia": allArticles.filter((a) => a.region === "Southeast Asia"),
-    Global: allArticles.filter((a) => a.region === "Global"),
-  };
-
-  return grouped;
+  return results
+    .filter(r => r.status === "fulfilled")
+    .flatMap(r => r.value)
+    .filter(a => a.title);
 }
 
-// Format headlines into a clean prompt for Claude
-export function formatHeadlinesForClaude(grouped) {
-  const sections = [];
-
-  for (const [region, articles] of Object.entries(grouped)) {
-    if (articles.length === 0) continue;
-    const lines = articles.map(
-      (a) => `- ${a.title}${a.summary ? ": " + a.summary : ""} [${a.source}]`
-    );
-    sections.push(`## ${region}\n${lines.join("\n")}`);
-  }
-
-  return sections.join("\n\n");
+// ── Format raw articles for the Claude generation prompt ──
+export function formatArticlesForClaude(articles) {
+  return articles.map((a, i) =>
+    `${i + 1}. [${a.source}] ${a.title}${a.summary ? ": " + a.summary : ""}`
+  ).join("\n");
 }
