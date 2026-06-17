@@ -72,9 +72,9 @@ async function showTopicSelector(chatId, botInstance) {
   topicSelectionState.set(chatId, new Set(current));
 
   await botInstance.sendMessage(chatId,
-    "📰 *Choose up to 3 news topics*
+    "\u{1F4F0} *Choose up to 3 news topics*
 
-Tap to select/deselect, then tap ✅ Done when finished:",
+Tap to select/deselect, then tap \u2705 Done when finished:",
     {
       parse_mode: "Markdown",
       reply_markup: buildTopicKeyboard(current),
