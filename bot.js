@@ -72,9 +72,8 @@ async function showTopicSelector(chatId, botInstance) {
   topicSelectionState.set(chatId, new Set(current));
 
   await botInstance.sendMessage(chatId,
-    "\u{1F4F0} *Choose up to 3 news topics*
+    `📰 *Choose up to 3 news topics*\n\nTap to select/deselect, then tap ✅ Done when finished:`,
 
-Tap to select/deselect, then tap \u2705 Done when finished:",
     {
       parse_mode: "Markdown",
       reply_markup: buildTopicKeyboard(current),
@@ -167,12 +166,7 @@ function registerHandlers() {
 
       const topicNames = selected.map(k => `${TOPIC_FEEDS[k].emoji} ${TOPIC_FEEDS[k].name}`).join(", ");
       await bot.editMessageText(
-        `✅ *News preferences saved!*
-
-Your topics: ${topicNames}
-
-Your personalised digest arrives every morning at 7am 🌅
-Use /topics anytime to update your preferences.`,
+        `✅ *News preferences saved!*\n\nYour topics: ${topicNames}\n\nYour personalised digest arrives every morning at 7am 🌅\nUse /topics anytime to update your preferences.`,
         { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
       );
     }
