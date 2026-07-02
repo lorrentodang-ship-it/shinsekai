@@ -1,7 +1,6 @@
 import "dotenv/config";
-import { initDB, db } from "./db.js";
+import { query } from "./db.js";
 
-// Raw CSV URLs from jamsinclair/open-anki-jlpt-decks (MIT licensed)
 const SOURCES = [
   {
     level: "N4",
@@ -16,16 +15,11 @@ const SOURCES = [
 function parseCSV(text) {
   const lines = text.trim().split("\n");
   const words = [];
-
   for (const line of lines) {
     if (!line.trim()) continue;
-
-    // CSV format: word,reading,"meaning",tags,id
-    // Handle quoted fields with commas inside
     const cols = [];
     let current = "";
     let inQuotes = false;
-
     for (const char of line) {
       if (char === '"') {
         inQuotes = !inQuotes;
@@ -37,91 +31,64 @@ function parseCSV(text) {
       }
     }
     cols.push(current.trim());
-
     if (cols.length >= 3) {
       const word = cols[0]?.trim();
       const reading = cols[1]?.trim();
       const meaning = cols[2]?.trim();
-
       if (word && reading && meaning) {
         words.push({ word, reading, meaning });
       }
     }
   }
-
   return words;
 }
 
 async function seedLevel(level, url) {
   console.log(`📥 Downloading ${level} vocab from GitHub...`);
-
   const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${level}: ${response.status}`);
-  }
+  if (!response.ok) throw new Error(`Failed to fetch ${level}: ${response.status}`);
 
   const text = await response.text();
   const words = parseCSV(text);
-
   console.log(`📝 Parsed ${words.length} words for ${level}`);
 
-  // Check how many already exist
-  const existing = db.prepare(
-    "SELECT COUNT(*) as count FROM vocab_master WHERE level = ?"
-  ).get(level);
-
-  if (existing.count > 0) {
-    console.log(`⚠️  ${level} already has ${existing.count} words in database. Skipping.`);
-    console.log(`   Run with --force to re-import.`);
-    return existing.count;
+  const existing = await query(
+    "SELECT COUNT(*) as count FROM vocab_master WHERE level = $1",
+    [level]
+  );
+  if (parseInt(existing.rows[0].count) > 0) {
+    console.log(`⚠️  ${level} already has ${existing.rows[0].count} words. Skipping.`);
+    return parseInt(existing.rows[0].count);
   }
 
-  // Insert all words
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO vocab_master (word, reading, meaning, level, frequency_rank)
-     VALUES (?, ?, ?, ?, ?)`
-  );
+  // Batch insert
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    await query(
+      `INSERT INTO vocab_master (word, reading, meaning, level, frequency_rank)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (word, level) DO NOTHING`,
+      [w.word, w.reading, w.meaning, level, i + 1]
+    );
+  }
 
-  const insertMany = db.transaction((words) => {
-    words.forEach((w, i) => {
-      insert.run(w.word, w.reading, w.meaning, level, i + 1);
-    });
-  });
-
-  insertMany(words);
-  console.log(`✅ Inserted ${words.length} ${level} words into vocab_master`);
+  console.log(`✅ Inserted ${words.length} ${level} words`);
   return words.length;
 }
 
 async function seed() {
-  const force = process.argv.includes("--force");
-
-  console.log("🌱 Starting vocabulary database seed...\n");
-  initDB();
-
-  if (force) {
-    console.log("⚠️  Force mode: clearing existing vocab_master data...");
-    db.prepare("DELETE FROM vocab_master").run();
-  }
-
-  let total = 0;
+  console.log("🌱 Starting vocabulary seed...");
   for (const source of SOURCES) {
     try {
-      const count = await seedLevel(source.level, source.url);
-      total += count;
+      await seedLevel(source.level, source.url);
     } catch (err) {
       console.error(`❌ Failed to seed ${source.level}:`, err.message);
     }
   }
 
-  // Summary
-  const n4Count = db.prepare("SELECT COUNT(*) as c FROM vocab_master WHERE level = 'N4'").get().c;
-  const n3Count = db.prepare("SELECT COUNT(*) as c FROM vocab_master WHERE level = 'N3'").get().c;
-
-  console.log(`\n🎉 Seed complete!`);
-  console.log(`   N4 words: ${n4Count}`);
-  console.log(`   N3 words: ${n3Count}`);
-  console.log(`   Total: ${n4Count + n3Count}`);
+  const n4 = await query("SELECT COUNT(*) as c FROM vocab_master WHERE level = 'N4'");
+  const n3 = await query("SELECT COUNT(*) as c FROM vocab_master WHERE level = 'N3'");
+  console.log(`🎉 Seed complete! N4: ${n4.rows[0].c}, N3: ${n3.rows[0].c}`);
 }
 
 export default seed;
