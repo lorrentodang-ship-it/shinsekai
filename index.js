@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { startBot } from "./bot.js";
-import { initDB, db } from "./db.js";
+import { initDB, query } from "./db.js";
 import { startScheduler } from "./scheduler.js";
 import seed from "./seed.js";
 import seedGrammar from "./seed_grammar.js";
@@ -9,7 +9,8 @@ console.log("🤖 Starting Japanese Tutor Bot...");
 await initDB();
 
 // Auto-seed vocab database if empty
-const vocabCount = db.prepare("SELECT COUNT(*) as c FROM vocab_master").get().c;
+const vocabRes = await query("SELECT COUNT(*) as c FROM vocab_master");
+const vocabCount = parseInt(vocabRes.rows[0].c);
 if (vocabCount === 0) {
   console.log("📚 Vocab database empty — seeding now...");
   await seed();
@@ -18,7 +19,8 @@ if (vocabCount === 0) {
 }
 
 // Auto-seed grammar database if empty
-const grammarCount = db.prepare("SELECT COUNT(*) as c FROM grammar_master").get().c;
+const grammarRes = await query("SELECT COUNT(*) as c FROM grammar_master");
+const grammarCount = parseInt(grammarRes.rows[0].c);
 if (grammarCount === 0) {
   console.log("📝 Grammar database empty — seeding now...");
   await seedGrammar();
