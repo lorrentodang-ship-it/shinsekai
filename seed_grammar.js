@@ -1,39 +1,36 @@
-import { initDB, db } from "./db.js";
+import { query } from "./db.js";
 import { N3_GRAMMAR } from "./grammar_master_data.js";
 
 async function seedGrammar() {
-  const existing = db.prepare("SELECT COUNT(*) as c FROM grammar_master").get().c;
+  const existing = await query("SELECT COUNT(*) as c FROM grammar_master");
+  const count = parseInt(existing.rows[0].c);
 
-  if (existing > 0) {
-    console.log(`⚠️  grammar_master already has ${existing} patterns. Skipping.`);
-    console.log(`   Run with --force to re-import.`);
-    return existing;
+  if (count > 0) {
+    console.log(`⚠️  grammar_master already has ${count} patterns. Skipping.`);
+    return count;
   }
 
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO grammar_master
-      (pattern, romaji, meaning, category, difficulty_rank, example_sentence)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
+  console.log(`📝 Seeding ${N3_GRAMMAR.length} N3 grammar patterns...`);
 
-  const insertMany = db.transaction((patterns) => {
-    patterns.forEach(g => {
-      insert.run(g.pattern, g.romaji, g.meaning, g.category, g.difficulty_rank, g.example || "");
-    });
-  });
+  for (const g of N3_GRAMMAR) {
+    await query(
+      `INSERT INTO grammar_master
+       (pattern, romaji, meaning, category, difficulty_rank, example_sentence)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (pattern) DO NOTHING`,
+      [g.pattern, g.romaji, g.meaning, g.category, g.difficulty_rank, g.example || ""]
+    );
+  }
 
-  insertMany(N3_GRAMMAR);
+  const final = await query("SELECT COUNT(*) as c FROM grammar_master");
+  console.log(`✅ Inserted ${final.rows[0].c} grammar patterns`);
 
-  const count = db.prepare("SELECT COUNT(*) as c FROM grammar_master").get().c;
-  console.log(`✅ Inserted ${count} N3 grammar patterns into grammar_master`);
-
-  // Log category breakdown
-  const cats = db.prepare(
+  const cats = await query(
     "SELECT category, COUNT(*) as c FROM grammar_master GROUP BY category ORDER BY c DESC"
-  ).all();
-  cats.forEach(r => console.log(`   ${r.category}: ${r.c}`));
+  );
+  cats.rows.forEach(r => console.log(`   ${r.category}: ${r.c}`));
 
-  return count;
+  return parseInt(final.rows[0].c);
 }
 
 export default seedGrammar;
